@@ -12,6 +12,7 @@ class AdminController extends Controller
   
 public function login(Request $request)
 {
+    
     $validator = Validator::make($request->all(),[
         'username' => 'required_without:email',
         'email' => 'required_without:username',
