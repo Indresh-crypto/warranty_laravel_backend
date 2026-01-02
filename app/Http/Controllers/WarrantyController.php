@@ -28,6 +28,7 @@ use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\WarrantyProductCoverage;
 use DB;
+use App\Events\WarrantyRegistered;
 
 class WarrantyController extends Controller
 {
@@ -403,6 +404,13 @@ public function createDevice(Request $request)
         'w_code' => $wCode
     ]);
 
+    $device->load([
+    'customer',
+        'product.coverages'
+    ]);
+    
+    event(new WarrantyRegistered($device));
+    
     return response()->json([
         'message' => 'Device created successfully',
         'device' => $device

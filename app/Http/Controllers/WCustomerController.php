@@ -13,6 +13,7 @@ use DB;
 
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use App\Events\CustomerRegistered;
 
 class WCustomerController extends Controller
 {
@@ -193,6 +194,7 @@ class WCustomerController extends Controller
                     'c_code' => $cCode
                 ]);
     
+                event(new CustomerRegistered($customer));
                 // First address
                 $customer->addresses()->create([
                     'w_customer_id' => $customer->id,
@@ -220,7 +222,7 @@ class WCustomerController extends Controller
     
             if (!$addressExists) {
                 $customer->addresses()->create([
-                    'w_customer_id' => $customer->w_customer_id,
+                    'w_customer_id' => $customer->id,
                     'name' => $request->name,
                     'mobile' => $request->mobile,
                     'address1' => $request->address1,

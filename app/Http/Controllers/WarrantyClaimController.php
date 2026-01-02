@@ -10,7 +10,7 @@ use App\Models\WDevice;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use App\Models\WarrantyClaimUpload;
-
+use App\Events\ClaimRaised;
 
 class WarrantyClaimController extends Controller
 {
@@ -99,6 +99,10 @@ class WarrantyClaimController extends Controller
     
             DB::commit();
     
+            $claim->load(['customer', 'device', 'photos']);
+            
+            event(new ClaimRaised($claim));
+
             return response()->json([
                 'status'     => true,
                 'claim_id'   => $claim->id,

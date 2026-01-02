@@ -32,6 +32,7 @@ use App\Http\Controllers\WarrantyInvoiceController;
 use App\Http\Controllers\WarrantyClaimController;
 use App\Http\Controllers\WCustomerAddressController;
 use App\Http\Controllers\WProductCoverageController;
+use App\Http\Controllers\PhonePeController;
 
     Route::prefix('zoho')->group(function () {
         Route::get('/update-token', [ZohoCustomerController::class, 'updateZohoAccessToken']);
@@ -260,3 +261,8 @@ use App\Http\Controllers\WProductCoverageController;
     Route::delete('/payment/keys/{id}', [PaymentGatewayKeyController::class, 'destroy']);
     Route::get('/pincode/{pincode}', [IndiaPincodeController::class, 'getByPincode']);
     
+    Route::post('/phonepe/create-payment', [PhonePeController::class, 'createPayment']);
+    Route::post('/phonepe/callback', [PhonePeController::class, 'callback']);
+    Route::get('/phonepe/status/{txnId}', [PhonePeController::class, 'checkStatus']);
+
+
