@@ -216,15 +216,18 @@ use App\Http\Controllers\PhonePeController;
             Route::post('delete', [WCustomerAddressController::class, 'delete']);
         });
 
-      Route::post('retailers/by-pincode', [CompanyController::class, 'byPincode']);
-      Route::get('claims/list', [WarrantyClaimController::class, 'list']);
-      
-    Route::post('add-coverages', [WProductCoverageController::class,'store']);
-
-    Route::get('coverages/{productId}', [WProductCoverageController::class, 'index']);
-    Route::put('coverages/update/{id}', [WProductCoverageController::class, 'update']);
-    Route::delete('coverages/delete/{id}', [WProductCoverageController::class, 'destroy']);
+          Route::post('retailers/by-pincode', [CompanyController::class, 'byPincode']);
+          Route::get('claims/list', [WarrantyClaimController::class, 'list']);
+          Route::post('claims/employee', [WarrantyClaimController::class, 'employeeClaims']);
+          Route::post('claims/assignments', [WarrantyClaimController::class, 'assignmentList']);
+          
+        Route::post('add-coverages', [WProductCoverageController::class,'store']);
+    
+        Route::get('coverages/{productId}', [WProductCoverageController::class, 'index']);
+        Route::put('coverages/update/{id}', [WProductCoverageController::class, 'update']);
+        Route::delete('coverages/delete/{id}', [WProductCoverageController::class, 'destroy']);
         
+        Route::post('/company/approve-claim', [WarrantyClaimController::class,'approveClaimByCompany']);
 
 
     });

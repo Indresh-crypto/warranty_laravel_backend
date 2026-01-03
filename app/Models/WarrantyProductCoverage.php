@@ -22,4 +22,9 @@ class WarrantyProductCoverage extends Model
     {
         return $this->belongsTo(WarrantyProduct::class, 'warranty_product_id');
     }
+    
+    public function claims()
+    {
+        return $this->hasMany(WarrantyClaimCoverage::class, 'coverage_id');
+    }
 }

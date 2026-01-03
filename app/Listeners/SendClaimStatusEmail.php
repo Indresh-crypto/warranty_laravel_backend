@@ -2,24 +2,25 @@
 
 namespace App\Listeners;
 
-use App\Events\ClaimRaised;
-use App\Mail\ClaimRaisedMail;
+use App\Events\ClaimStatusUpdated;
+use App\Mail\ClaimStatusMail;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Log;
 
-class SendClaimRaisedEmail
+class SendClaimStatusEmail
 {
-    public function handle(ClaimRaised $event): void
+    public function handle(ClaimStatusUpdated $event): void
     {
         $claim = $event->claim->loadMissing([
             'customer',
             'device',
-            'photos'
+            'assignment'
         ]);
 
         if (!$claim->customer || !$claim->device) {
-            Log::error('Claim mail skipped due to missing relation', [
-                'claim_id' => $claim->id
+            Log::error('Claim status mail skipped', [
+                'claim_id' => $claim->id,
+                'status' => $event->status
             ]);
             return;
         }
@@ -27,11 +28,11 @@ class SendClaimRaisedEmail
         // 📧 Customer
         if ($claim->customer->email) {
             Mail::to($claim->customer->email)
-                ->queue(new ClaimRaisedMail($claim));
+                ->queue(new ClaimStatusMail($claim, $event->status));
         }
 
-        // 📧 Company (Admin inbox)
+        // 📧 Company
         Mail::to('hello@goelectronix.com')
-            ->queue(new ClaimRaisedMail($claim, true));
+            ->queue(new ClaimStatusMail($claim, $event->status, true));
     }
 }

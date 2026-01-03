@@ -995,7 +995,7 @@ public function createDevice(Request $request)
        
      public function getWarrantyCustomerDetails(Request $request)
     {
-        $query = WCustomer::with('devices', 'retailer');
+        $query = WCustomer::with('devices', 'retailer', 'devices.product');
     
         // If 'id' is provided, return that customer
         if ($request->filled('id')) {

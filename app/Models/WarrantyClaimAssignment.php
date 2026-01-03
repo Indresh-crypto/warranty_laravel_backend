@@ -11,6 +11,13 @@ class WarrantyClaimAssignment extends Model
         'warranty_claim_id',
         'employee_id',
         'pickup_otp',
-        'delivery_otp'
+        'delivery_otp',
+        'assigned_by',
+        'pickup_verified'
     ];
+    
+     public function claim()
+    {
+        return $this->belongsTo(WarrantyClaim::class, 'warranty_claim_id');
+    }
 }

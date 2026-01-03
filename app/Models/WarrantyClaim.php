@@ -42,5 +42,14 @@ class WarrantyClaim extends Model
     {
         return $this->belongsTo(Company::class, 'drop_retailer_id');
     }
+    public function assignment()
+    {
+        return $this->hasOne(WarrantyClaimAssignment::class, 'warranty_claim_id');
+    }
+
+    public function coverages()
+    {
+        return $this->hasMany(WarrantyClaimCoverage::class, 'warranty_claim_id');
+    }
 
 }
