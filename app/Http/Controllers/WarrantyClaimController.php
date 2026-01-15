@@ -15,6 +15,7 @@ use App\Events\ClaimStatusUpdated;
 use Illuminate\Support\Facades\Log;
 use App\Models\WarrantyProductCoverage;
 use App\Models\WarrantyClaimCoverage;
+use App\Models\ClaimReason;
 
 class WarrantyClaimController extends Controller
 {
@@ -141,34 +142,34 @@ class WarrantyClaimController extends Controller
 }
 
 
-    public function approveClaim(Request $request)
-    {
-        $request->validate([
-            'claim_id' => 'required|integer|exists:warranty_claims,id'
-        ]);
-    
-        $claim = WarrantyClaim::findOrFail($request->claim_id);
-    
-        // only admin company (id = 1)
-        if (auth()->user()->company_id != 1) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
-    
-        $otp = rand(100000, 999999);
-    
-        $claim->update([
-            'otp'    => $otp,
-            'status' => 'otp_sent'
-        ]);
-    
-        // 🔔 send OTP email / SMS here
-        event(new ClaimStatusUpdated($claim, 'otp_sent'));
-    
-        return response()->json([
-            'status' => true,
-            'message' => 'Claim approved & OTP sent'
-        ]);
+public function approveClaim(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'claim_id'  => 'required|integer|exists:warranty_claims,id',
+        'reason_id' => 'nullable|integer|exists:claim_reasons,id',
+        'remark'    => 'nullable|string'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['status'=>false,'errors'=>$validator->errors()],422);
     }
+
+    $claim = WarrantyClaim::find($request->claim_id);
+
+    $claim->update([
+        'status'     => 'approved',
+        'reason_id' => $request->reason_id,
+        'remark'    => $request->remark
+    ]);
+
+    // ✅ ADD THIS
+    event(new ClaimStatusUpdated($claim, 'approved'));
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Claim approved'
+    ]);
+}
 
    public function verifyOtp(Request $request)
    {
@@ -281,33 +282,48 @@ class WarrantyClaimController extends Controller
     }
     
     
-    public function inspectionReport(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'claim_id' => 'required|integer',
-            'report'   => 'required|string',
-            'amount'   => 'nullable|numeric'
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-    
-        $claim = WarrantyClaim::find($request->claim_id);
+ public function inspectionReport(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'claim_id'        => 'required|integer|exists:warranty_claims,id',
+        'report'          => 'required',
 
-        event(new ClaimStatusUpdated($claim, 'estimate_sent'));
+        // 💰 New fields
+        'estimate_amount' => 'required|numeric|min:0',
+        'payable_amount'  => 'required|numeric|min:0',
+        'payment_link'    => 'nullable|url',
+        'payment_status'  => 'nullable|in:pending,paid,failed',
+        'inspection_remark' => 'nullable'
+    ]);
 
-        WarrantyClaim::where('id', $request->claim_id)->update([
-            'inspection_report' => $request->report,
-            'estimate_amount'   => $request->amount,
-            'status'            => 'estimate_sent'
-        ]);
-    
-        return response()->json(['status' => true]);
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'errors' => $validator->errors()
+        ], 422);
     }
+
+    $claim = WarrantyClaim::find($request->claim_id);
+
+    // ✅ Update claim with inspection + payment data
+    $claim->update([
+        'inspection_report' => $request->report,
+        'estimate_amount'   => $request->estimate_amount,
+        'payable_amount'    => $request->payable_amount,
+        'payment_link'      => $request->payment_link,
+        'payment_status'    => $request->payment_status ?? 'pending',
+        'status'            => 'estimate_sent',
+        'inspection_remark' => $request->inspection_remark ?? ""
+    ]);
+
+    // 🔔 Notify customer & company
+    event(new ClaimStatusUpdated($claim, 'estimate_sent'));
+
+    return response()->json([
+        'status'  => true,
+        'message' => 'Inspection report & estimate sent successfully'
+    ]);
+}
     
     public function approveEstimate(Request $request)
     {
@@ -455,114 +471,113 @@ class WarrantyClaimController extends Controller
         }
     }
 
-    public function list(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'claim_id'        => 'nullable|integer',
-            'claim_code'      => 'nullable|string',
-            'w_customer_id'   => 'nullable|integer',
-            'w_device_id'     => 'nullable|integer',
-            'company_id'      => 'nullable|integer',
-            'retailer_id'     => 'nullable|integer', // role = 5
-            'claim_type'      => 'nullable|in:pickup,drop',
-            'status'          => 'nullable|string',
-            'from_date'       => 'nullable|date',
-            'to_date'         => 'nullable|date',
-            'search'          => 'nullable|string',
-            'per_page'        => 'nullable|integer|min:1|max:100'
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-    
-        $query = WarrantyClaim::query()
-            ->with([
-                'customer:id,name,mobile,email',
-                'device:id,product_name,model,imei1',
-                'dropRetailer:id,business_name,city,pincode',
-                'coverages:id,warranty_claim_id,coverage_id,coverage_title' // ✅ ADD THIS
-            ]);
-    
-        /* ================== EXACT FILTERS ================== */
-    
-        if ($request->filled('claim_id')) {
-            $query->where('id', $request->claim_id);
-        }
-    
-        if ($request->filled('claim_code')) {
-            $query->where('claim_code', $request->claim_code);
-        }
-    
-        if ($request->filled('w_customer_id')) {
-            $query->where('w_customer_id', $request->w_customer_id);
-        }
-    
-        if ($request->filled('w_device_id')) {
-            $query->where('w_device_id', $request->w_device_id);
-        }
-    
-        if ($request->filled('company_id')) {
-            $query->where('company_id', $request->company_id);
-        }
-    
-        if ($request->filled('retailer_id')) {
-            $query->where('drop_retailer_id', $request->retailer_id);
-        }
-    
-        if ($request->filled('claim_type')) {
-            $query->where('claim_type', $request->claim_type);
-        }
-    
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        }
-    
-        /* ================== DATE FILTER ================== */
-    
-        if ($request->filled('from_date') && $request->filled('to_date')) {
-            $query->whereBetween('created_at', [
-                $request->from_date . ' 00:00:00',
-                $request->to_date . ' 23:59:59'
-            ]);
-        }
-    
-        /* ================== GLOBAL SEARCH ================== */
-    
-        if ($request->filled('search')) {
-            $search = $request->search;
-    
-            $query->where(function ($q) use ($search) {
-                $q->where('claim_code', 'like', "%{$search}%")
-                  ->orWhere('status', 'like', "%{$search}%")
-                  ->orWhereHas('customer', function ($c) use ($search) {
-                      $c->where('name', 'like', "%{$search}%")
-                        ->orWhere('mobile', 'like', "%{$search}%");
-                  })
-                  ->orWhereHas('device', function ($d) use ($search) {
-                      $d->where('product_name', 'like', "%{$search}%")
-                        ->orWhere('imei1', 'like', "%{$search}%");
-                  });
-            });
-        }
-    
-        /* ================== PAGINATION ================== */
-    
-        $perPage = $request->per_page ?? 10;
-    
-        $claims = $query
-            ->orderBy('id', 'desc')
-            ->paginate($perPage);
-    
+public function list(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'claim_id'        => 'nullable|integer',
+        'claim_code'      => 'nullable|string',
+        'w_customer_id'   => 'nullable|integer',
+        'w_device_id'     => 'nullable|integer',
+        'company_id'      => 'nullable|integer',
+        'retailer_id'     => 'nullable|integer',
+        'claim_type'      => 'nullable|in:pickup,drop',
+        'status'          => 'nullable|string',
+        'from_date'       => 'nullable|date',
+        'to_date'         => 'nullable|date',
+        'search'          => 'nullable|string',
+        'per_page'        => 'nullable|integer|min:1|max:100'
+    ]);
+
+    if ($validator->fails()) {
         return response()->json([
-            'status' => true,
-            'data'   => $claims
+            'status' => false,
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    // ✅ FIXED QUERY
+     $query = WarrantyClaim::query()->with([
+            'reason',
+            'photos',
+            'customer:id,name,mobile,email',
+            'pickupAddress',
+            'device:id,product_name,model,imei1',
+            'dropRetailer:id,business_name,city,pincode',
+            'coverages:id,warranty_claim_id,coverage_id,coverage_title',
+        
+            // ✅ ASSIGNMENT + EMPLOYEE
+            'assignment.employee:id,first_name,middle_name,last_name,official_phone,official_email,photo_url'
+        ]);
+
+    /* ========= FILTERS ========= */
+
+    if ($request->filled('claim_id')) {
+        $query->where('id', $request->claim_id);
+    }
+
+    if ($request->filled('claim_code')) {
+        $query->where('claim_code', $request->claim_code);
+    }
+
+    if ($request->filled('w_customer_id')) {
+        $query->where('w_customer_id', $request->w_customer_id);
+    }
+
+    if ($request->filled('w_device_id')) {
+        $query->where('w_device_id', $request->w_device_id);
+    }
+
+    if ($request->filled('company_id')) {
+        $query->where('company_id', $request->company_id);
+    }
+
+    if ($request->filled('retailer_id')) {
+        $query->where('drop_retailer_id', $request->retailer_id);
+    }
+
+    if ($request->filled('claim_type')) {
+        $query->where('claim_type', $request->claim_type);
+    }
+
+    if ($request->filled('status')) {
+        $query->where('status', $request->status);
+    }
+
+    if ($request->filled('from_date') && $request->filled('to_date')) {
+        $query->whereBetween('created_at', [
+            $request->from_date . ' 00:00:00',
+            $request->to_date . ' 23:59:59'
         ]);
     }
-    
+
+    /* ========= SEARCH ========= */
+
+    if ($request->filled('search')) {
+        $search = $request->search;
+
+        $query->where(function ($q) use ($search) {
+            $q->where('claim_code', 'like', "%{$search}%")
+              ->orWhere('status', 'like', "%{$search}%")
+              ->orWhereHas('customer', function ($c) use ($search) {
+                  $c->where('name', 'like', "%{$search}%")
+                    ->orWhere('mobile', 'like', "%{$search}%");
+              })
+              ->orWhereHas('device', function ($d) use ($search) {
+                  $d->where('product_name', 'like', "%{$search}%")
+                    ->orWhere('imei1', 'like', "%{$search}%");
+              });
+        });
+    }
+
+    $claims = $query
+        ->orderBy('id', 'desc')
+        ->paginate($request->per_page ?? 10);
+
+    return response()->json([
+        'status' => true,
+        'data'   => $claims
+    ]);
+}
     public function employeeClaims(Request $request)
     {
     $validator = Validator::make($request->all(), [
@@ -653,6 +668,54 @@ class WarrantyClaimController extends Controller
         return response()->json([
             'status' => true,
             'data'   => $assignments
+        ]);
+    }
+    public function claimReason(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'reason_type' => 'nullable|in:reject,hold,info,approve'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>false,'errors'=>$validator->errors()],422);
+        }
+
+        $query = ClaimReason::where('status', 1);
+
+        if ($request->filled('reason_type')) {
+            $query->where('reason_type', $request->reason_type);
+        }
+
+        return response()->json([
+            'status' => true,
+            'data' => $query->orderBy('id')->get()
+        ]);
+    }
+    public function rejectClaim(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'claim_id'  => 'required|integer|exists:warranty_claims,id',
+            'reason_id' => 'required|integer|exists:claim_reasons,id',
+            'remark'    => 'nullable|string'
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json(['status'=>false,'errors'=>$validator->errors()],422);
+        }
+    
+        $claim = WarrantyClaim::find($request->claim_id);
+    
+        $claim->update([
+            'status'     => 'rejected',
+            'reason_id' => $request->reason_id,
+            'remark'    => $request->remark
+        ]);
+    
+        event(new ClaimStatusUpdated($claim, 'rejected'));
+    
+        return response()->json([
+            'status' => true,
+            'message' => 'Claim rejected successfully'
         ]);
     }
 }

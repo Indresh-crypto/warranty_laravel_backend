@@ -33,6 +33,7 @@ use App\Http\Controllers\WarrantyClaimController;
 use App\Http\Controllers\WCustomerAddressController;
 use App\Http\Controllers\WProductCoverageController;
 use App\Http\Controllers\PhonePeController;
+use App\Http\Controllers\RazorpayWebhookController;
 
     Route::prefix('zoho')->group(function () {
         Route::get('/update-token', [ZohoCustomerController::class, 'updateZohoAccessToken']);
@@ -75,7 +76,10 @@ use App\Http\Controllers\PhonePeController;
         
          Route::get('/bharat-data', [CompanyEmployeeController::class, 'employeeAreaWiseReport']);
          
-          Route::get('/state-district-shop-data', [CompanyEmployeeController::class, 'stateDistrictShopCount']);
+         Route::get('/state-district-shop-data', [CompanyEmployeeController::class, 'stateDistrictShopCount']);
+         
+         Route::post('/employee/reset-password', [CompanyEmployeeController::class, 'resetEmployeePassword']);
+         Route::post('/employee/set-password', [CompanyEmployeeController::class, 'setEmployeePassword']);
     });
     
     
@@ -99,7 +103,9 @@ use App\Http\Controllers\PhonePeController;
     Route::get('/common/get-users', [CommonUpdateController::class, 'getCompanies']);
     Route::post('/common/generate-user-code', [CommonUpdateController::class, 'generateUserCode']);
 
-
+    Route::post('/common/logout', [CommonAuthController::class, 'logout']);
+    Route::get('/common/logout-status/{id}', [CommonAuthController::class, 'getLogoutStatus']);
+    
 
     Route::get('/badges', [WBadgeController::class, 'index']);
     Route::get('/badges/{id}', [WBadgeController::class, 'show']);
@@ -227,9 +233,15 @@ use App\Http\Controllers\PhonePeController;
         Route::put('coverages/update/{id}', [WProductCoverageController::class, 'update']);
         Route::delete('coverages/delete/{id}', [WProductCoverageController::class, 'destroy']);
         
-        Route::post('/company/approve-claim', [WarrantyClaimController::class,'approveClaimByCompany']);
+        Route::post('/company/approve-claim', [WarrantyClaimController::class,'approveClaim']);
+        Route::post('/company/reject-claim', [WarrantyClaimController::class,'rejectClaim']);
+        Route::get('claim-reasons', [WarrantyClaimController::class, 'claimReason']);
+        
+        Route::get('/payout-summary', [WCustomerController::class, 'payouts']);
+        
+       Route::post('/esign/webhook', [AgreementController::class, 'callback']);
 
-
+      
     });
 
     Route::prefix('warrantybuilder')->group(function () {
@@ -268,4 +280,5 @@ use App\Http\Controllers\PhonePeController;
     Route::post('/phonepe/callback', [PhonePeController::class, 'callback']);
     Route::get('/phonepe/status/{txnId}', [PhonePeController::class, 'checkStatus']);
 
+    Route::post('/razorpay/webhook', [RazorpayWebhookController::class, 'handle']);
 

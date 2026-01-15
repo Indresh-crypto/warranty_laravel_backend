@@ -52,7 +52,11 @@ class WDevice extends Model
         'note',
         'company_id',
         'created_by',
-        'w_code'
+        'w_code',
+        'whatsapp_sent',
+        'whatsapp_sent_at',
+        'product_mrp'
+        
     ];
 
     public function customer()

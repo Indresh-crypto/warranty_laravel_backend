@@ -32,7 +32,8 @@ class CompanyEmployee extends Model
         'pincodes',
         'employee_type',
         'location_mode',
-        'photo_url'
+        'photo_url',
+        'password_changed_at'
     ];
 
     protected $casts = [

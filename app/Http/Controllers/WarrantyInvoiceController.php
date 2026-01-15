@@ -153,116 +153,116 @@ class WarrantyInvoiceController extends Controller
     //
     public function cancelWarrantyAndCreateCreditNote(Request $request)
     {
-    $request->validate([
-        'w_device_id' => 'required|exists:w_devices,id',
-        'reason'      => 'nullable|string'
-    ]);
-
-    $device = WDevice::find($request->w_device_id);
-
-    // 🚫 Already credited
-    if ($device->credit_note) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Credit note already issued for this device'
-        ], 409);
-    }
-
-    if (!$device->invoice_id) {
-        return response()->json([
-            'status' => false,
-            'message' => 'No invoice found for this device'
-        ], 400);
-    }
-
-    // 🔐 Company (Zoho org)
-    $company = Company::where('id', $device->company_id)
-        ->where('role', 2)
-        ->first();
-
-    if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Zoho credentials not found'
-        ], 400);
-    }
-
-    // 🏪 Retailer (Zoho customer)
-    $retailer = Company::find($device->retailer_id);
-
-    if (!$retailer || !$retailer->zoho_id) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Retailer Zoho contact not found'
-        ], 400);
-    }
-
-    // 🧾 Credit note payload
-    $payload = [
-        "customer_id" => $retailer->zoho_id,
-        "invoice_id"  => $device->invoice_id,
-        "date"        => now()->format('Y-m-d'),
-        "line_items"  => [
-            [
-                "name"        => $device->product_name ?? 'Warranty Cancellation',
-                "description" => "Warranty cancelled for device ID {$device->id}",
-                "rate"        => $device->product_price,
-                "quantity"    => 1,
-            ]
-        ],
-        "notes" => $request->reason ?? 'Warranty cancelled',
-        "status" => 4
-    ];
-
-    $client = new \GuzzleHttp\Client();
-
-    try {
-        $response = $client->post(
-            "https://www.zohoapis.in/books/v3/creditnotes",
-            [
-                'headers' => [
-                    'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
-                    'Content-Type'  => 'application/json',
-                ],
-                'query' => [
-                    'organization_id' => $company->zoho_org_id,
-                ],
-                'json' => $payload,
-            ]
-        );
-
-        $body = json_decode($response->getBody(), true);
-
-        if (empty($body['creditnote']['creditnote_id'])) {
+        $request->validate([
+            'w_device_id' => 'required|exists:w_devices,id',
+            'reason'      => 'nullable|string'
+        ]);
+    
+        $device = WDevice::find($request->w_device_id);
+    
+        // 🚫 Already credited
+        if ($device->credit_note) {
             return response()->json([
                 'status' => false,
-                'message' => 'Credit note creation failed'
-            ], 500);
+                'message' => 'Credit note already issued for this device'
+            ], 409);
+        }
+    
+        if (!$device->invoice_id) {
+            return response()->json([
+                'status' => false,
+                'message' => 'No invoice found for this device'
+            ], 400);
         }
 
-        // ✅ Update device
-        $device->update([
-            'credit_note'   => $body['creditnote']['creditnote_id'],
-            'cd_issued_date'=> now(),
-            'status_remark' => 'Warranty cancelled',
-        ]);
-
-        return response()->json([
-            'status' => true,
-            'message' => 'Warranty cancelled and credit note created',
-            'credit_note_id' => $body['creditnote']['creditnote_id']
-        ], 200);
-
-    } catch (\GuzzleHttp\Exception\ClientException $e) {
-        $errorBody = json_decode(
-            $e->getResponse()->getBody()->getContents(),
-            true
-        );
-
-        return response()->json([
-            'status' => false,
-            'error' => $errorBody['message'] ?? $e->getMessage()
-        ], $e->getResponse()->getStatusCode());
+        // 🔐 Company (Zoho org)
+        $company = Company::where('id', $device->company_id)
+            ->where('role', 2)
+            ->first();
+    
+        if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Zoho credentials not found'
+            ], 400);
+        }
+    
+            // 🏪 Retailer (Zoho customer)
+            $retailer = Company::find($device->retailer_id);
+        
+            if (!$retailer || !$retailer->zoho_id) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Retailer Zoho contact not found'
+                ], 400);
+            }
+        
+            // 🧾 Credit note payload
+            $payload = [
+                "customer_id" => $retailer->zoho_id,
+                "invoice_id"  => $device->invoice_id,
+                "date"        => now()->format('Y-m-d'),
+                "line_items"  => [
+                    [
+                        "name"        => $device->product_name ?? 'Warranty Cancellation',
+                        "description" => "Warranty cancelled for device ID {$device->id}",
+                        "rate"        => $device->product_price,
+                        "quantity"    => 1,
+                    ]
+                ],
+                "notes" => $request->reason ?? 'Warranty cancelled',
+                "status" => 4
+            ];
+        
+            $client = new \GuzzleHttp\Client();
+    
+        try {
+            $response = $client->post(
+                "https://www.zohoapis.in/books/v3/creditnotes",
+                [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                        'Content-Type'  => 'application/json',
+                    ],
+                    'query' => [
+                        'organization_id' => $company->zoho_org_id,
+                    ],
+                    'json' => $payload,
+                ]
+            );
+    
+            $body = json_decode($response->getBody(), true);
+    
+            if (empty($body['creditnote']['creditnote_id'])) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Credit note creation failed'
+                ], 500);
+            }
+    
+            // ✅ Update device
+            $device->update([
+                'credit_note'   => $body['creditnote']['creditnote_id'],
+                'cd_issued_date'=> now(),
+                'status_remark' => 'Warranty cancelled',
+            ]);
+    
+            return response()->json([
+                'status' => true,
+                'message' => 'Warranty cancelled and credit note created',
+                'credit_note_id' => $body['creditnote']['creditnote_id']
+            ], 200);
+    
+        } catch (\GuzzleHttp\Exception\ClientException $e) {
+            $errorBody = json_decode(
+                $e->getResponse()->getBody()->getContents(),
+                true
+            );
+    
+            return response()->json([
+                'status' => false,
+                'error' => $errorBody['message'] ?? $e->getMessage()
+            ], $e->getResponse()->getStatusCode());
+        }
     }
-}
 }

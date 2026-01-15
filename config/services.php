@@ -13,6 +13,13 @@ return [
     | a conventional file to locate the various service credentials.
     |
     */
+    
+     'razorpay' => [
+        'webhook_secret' => env('RAZORPAY_WEBHOOK_SECRET'),
+        'razorpay_key' => env('RAZORPAY_KEY'),
+        'razorpay_secret' => env('RAZORPAY_SECRET')
+    ],
+    
     'phonepe' => [
     'merchant_id' => env('PHONEPE_MERCHANT_ID'),
     'salt_key'    => env('PHONEPE_SALT_KEY'),
@@ -20,6 +27,14 @@ return [
     'base_url'    => env('PHONEPE_BASE_URL'),
     ],
     
+    
+    
+    'gupshup' => [
+        'key' => env('GUPSHUP_API_KEY'),
+        'source' => env('GUPSHUP_WHATSAPP_NUMBER'),
+        'app_name' => env('GUPSHUP_APP_NAME'),
+    ],
+
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
     ],

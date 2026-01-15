@@ -2,62 +2,147 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<style>
-body { font-family: Arial; background:#f4f6f8; padding:20px; }
-.box { max-width:700px; margin:auto; background:#fff; border-radius:6px; }
-.header { background:#b71c1c; color:#fff; padding:20px; text-align:center; }
-.section { padding:20px; }
-table { width:100%; border-collapse:collapse; }
-td, th { border:1px solid #ddd; padding:10px; }
-.footer { background:#eee; padding:12px; text-align:center; font-size:12px; }
-</style>
+<title>Claim Notification</title>
 </head>
-<body>
 
-<div class="box">
+<body style="margin:0; padding:0; background:#f4f6f8; font-family:Arial, Helvetica, sans-serif;">
 
-<div class="header">
-<h2>{{ $isCompany ? 'New Claim Raised' : 'Claim Registered Successfully' }}</h2>
-</div>
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:20px 0;">
+<tr>
+<td align="center">
 
-<div class="section">
-<h3>Claim Details</h3>
-<table>
-<tr><th>Claim Code</th><td>{{ $claim->claim_code }}</td></tr>
-<tr><th>Status</th><td>{{ ucfirst($claim->status) }}</td></tr>
-<tr><th>Issue</th><td>{{ $claim->issue_description }}</td></tr>
-<tr><th>Type</th><td>{{ ucfirst($claim->claim_type) }}</td></tr>
+<!-- Card -->
+<table width="700" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:10px;
+              box-shadow:0 6px 20px rgba(0,0,0,0.08); overflow:hidden;">
+
+<!-- Header -->
+<tr>
+<td style="background:linear-gradient(135deg,#b71c1c,#e53935);
+           padding:26px; text-align:center; color:#ffffff;">
+<h1 style="margin:0; font-size:24px;">
+{{ $isCompany ? 'New Claim Raised' : 'Claim Registered Successfully' }}
+</h1>
+<p style="margin:8px 0 0; font-size:14px; color:#ffebee;">
+Claim Reference: <strong>{{ $claim->claim_code }}</strong>
+</p>
+</td>
+</tr>
+
+<!-- Body -->
+<tr>
+<td style="padding:26px; color:#1f2937; font-size:14px; line-height:1.6;">
+
+<p>
+Hello,
+</p>
+
+@if($isCompany)
+<p>
+A new warranty claim has been raised. Please review the details below and take the necessary action.
+</p>
+@else
+<p>
+Your warranty claim has been successfully registered. Our support team will review it and keep you updated.
+</p>
+@endif
+
+<!-- Claim Details -->
+<h3 style="margin:22px 0 10px; color:#b71c1c;">Claim Details</h3>
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:collapse; font-size:13.5px;">
+<tr>
+<td style="padding:10px; background:#fafafa; width:30%;"><strong>Claim Code</strong></td>
+<td style="padding:10px;">{{ $claim->claim_code }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>Status</strong></td>
+<td style="padding:10px;">
+<strong style="color:#b71c1c;">{{ ucfirst($claim->status) }}</strong>
+</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>Claim Type</strong></td>
+<td style="padding:10px;">{{ ucfirst($claim->claim_type) }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>Issue Description</strong></td>
+<td style="padding:10px;">{{ $claim->issue_description }}</td>
+</tr>
 </table>
-</div>
 
-<div class="section">
-<h3>Customer</h3>
-<table>
-<tr><th>Name</th><td>{{ $claim->customer?->name }}</td></tr>
-<tr><th>Email</th><td>{{ $claim->customer?->email }}</td></tr>
-<tr><th>Mobile</th><td>{{ $claim->customer?->mobile }}</td></tr>
+<!-- Customer -->
+<h3 style="margin:26px 0 10px; color:#b71c1c;">Customer Details</h3>
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:collapse; font-size:13.5px;">
+<tr>
+<td style="padding:10px; background:#fafafa; width:30%;"><strong>Name</strong></td>
+<td style="padding:10px;">{{ $claim->customer?->name }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>Email</strong></td>
+<td style="padding:10px;">{{ $claim->customer?->email }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>Mobile</strong></td>
+<td style="padding:10px;">{{ $claim->customer?->mobile }}</td>
+</tr>
 </table>
-</div>
 
-<div class="section">
-<h3>Device</h3>
-<table>
-<tr><th>Product</th><td>{{ $claim->device?->product_name }}</td></tr>
-<tr><th>Model</th><td>{{ $claim->device?->model }}</td></tr>
-<tr><th>IMEI</th><td>{{ $claim->device?->imei1 }}</td></tr>
-<tr><th>Warranty ID</th><td>{{ $claim->device?->w_code }}</td></tr>
+<!-- Device -->
+<h3 style="margin:26px 0 10px; color:#b71c1c;">Device Details</h3>
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:collapse; font-size:13.5px;">
+<tr>
+<td style="padding:10px; background:#fafafa; width:30%;"><strong>Product</strong></td>
+<td style="padding:10px;">{{ $claim->device?->product_name }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>Model</strong></td>
+<td style="padding:10px;">{{ $claim->device?->model }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>IMEI / Serial</strong></td>
+<td style="padding:10px;">{{ $claim->device?->imei1 }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#fafafa;"><strong>Warranty ID</strong></td>
+<td style="padding:10px;"><strong>{{ $claim->device?->w_code }}</strong></td>
+</tr>
 </table>
-</div>
 
-<div class="section">
-<p>📎 Claim photos are attached with this email.</p>
-</div>
+<!-- Attachment Note -->
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#fff5f5; border-left:4px solid #b71c1c;
+              border-radius:6px; margin-top:18px;">
+<tr>
+<td style="padding:12px; font-size:13px; color:#7f1d1d;">
+📎 Claim images and supporting documents are attached with this email.
+</td>
+</tr>
+</table>
 
-<div class="footer">
-© {{ date('Y') }} {{ config('app.name') }}
-</div>
+<p style="margin-top:22px;">
+Regards,<br>
+<strong>{{ config('app.name') }} Support Team</strong>
+</p>
 
-</div>
+</td>
+</tr>
+
+<!-- Footer -->
+<tr>
+<td style="background:#f3f4f6; padding:14px; text-align:center;
+           font-size:12px; color:#6b7280;">
+© {{ date('Y') }} {{ config('app.name') }}. All rights reserved.
+</td>
+</tr>
+
+</table>
+
+</td>
+</tr>
+</table>
 
 </body>
 </html>

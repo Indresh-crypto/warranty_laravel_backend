@@ -59,7 +59,15 @@ class Company extends Model
         'owner_middle_name',
         'owner_last_name',
         'owner_email',
-        'owner_contact'
+        'owner_contact',
+        'wa_response',
+        'gst_json',
+        'bank_json',
+        'bank_verified',
+        'gst_verified',
+        'agent_code',
+        'payment_type',
+        'is_logout'
 
     ];
 

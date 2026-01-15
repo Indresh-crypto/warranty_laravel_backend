@@ -74,92 +74,77 @@ class WhatsappController extends Controller
         ]);
     }
    
-      public function sendOtp(Request $request)
-      {
-        // Validate request
-        $validator = Validator::make($request->all(), [
-            'contact_phone' => 'required|digits:10',
-            'company_id'    => 'required|integer',
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => $validator->errors()->first(),
-                'errors'  => $validator->errors()
-            ], 422);
-        }
-    
-        // Check user exists
-        $user = Company::where('contact_phone', $request->contact_phone)
-                       ->where('id', $request->company_id)
-                       ->first();
-    
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not found. You need to sign up first.',
-                'user_exists' => false,
-            ], 404);
-        }
-    
-        // Generate OTP
-        $otp = rand(100000, 999999);
-        $phone = $request->contact_phone;
-    
-        // Store OTP in cache for 3 minutes
-        Cache::put("otp_{$phone}", $otp, now()->addMinutes(3));
-    
-        $destination = '91' . $phone;
-        $apiKey = 'xmzzeoeowfppicbquvp3zupvntzeqh2j';
-        $appName = 'Goelectronix';
-    
-        // Step 1: Opt-in user
-        if (!$this->optInUser($apiKey, $appName, $destination)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to opt-in user to WhatsApp.',
-                'user_exists' => true,
-            ], 500);
-        }
-    
-        // Create template JSON
-        $template = json_encode([
-            'id'     => '660d8484-af82-4b82-9d3a-6cdab7b1b9da',
-            'params' => [$otp],
-        ]);
-    
-        // Step 3: Send OTP message
-        $response = Http::asForm()->withHeaders([
-            'apikey' => $apiKey
-        ])->post('https://api.gupshup.io/wa/api/v1/template/msg', [
+    public function sendOtp(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'contact_phone' => 'required|digits:10',
+        'company_id'    => 'required|integer',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => $validator->errors()->first(),
+            'errors'  => $validator->errors()
+        ], 422);
+    }
+
+    $user = Company::where('contact_phone', $request->contact_phone)
+        ->where('id', $request->company_id)
+        ->first();
+
+    if (!$user) {
+        return response()->json([
+            'success' => false,
+            'message' => 'User not found. You need to sign up first.',
+            'user_exists' => false,
+        ], 404);
+    }
+
+    // 🔐 Generate OTP
+    $otp = rand(100000, 999999);
+    $phone = $request->contact_phone;
+
+    Cache::put("otp_{$phone}", $otp, now()->addMinutes(3));
+
+    $destination = '91' . $phone;
+
+    // ✅ Gupshup values
+    $apiKey  = config('services.gupshup.key');
+    $source  = '15557661628';
+    $appName = 'GoelectronixWarranty';
+
+    // Template payload
+    $template = json_encode([
+        'id'     => '20d82dbd-0fcb-46b4-a574-9b69719ce49a',
+        'params' => [$otp],
+    ]);
+
+    $response = Http::asForm()
+        ->withHeaders(['apikey' => $apiKey])
+        ->post('https://api.gupshup.io/wa/api/v1/template/msg', [
             'channel'     => 'whatsapp',
-            'source'      => '919372011028',
+            'source'      => $source,
             'destination' => $destination,
             'src.name'    => $appName,
             'template'    => $template,
         ]);
-    
-        $responseBody = $response->json();
-    
-        if ($response->successful()) {
-            return response()->json([
-                'success' => true,
-                'message' => 'OTP sent successfully.',
-                'user_exists' => true,
-                'otp' => $otp, // remove in production!
-                'response' => $responseBody,
-                'user' => $user,
-            ]);
-        }
-    
+
+    if ($response->successful()) {
         return response()->json([
-            'success' => false,
-            'message' => 'Failed to send OTP.',
+            'success' => true,
+            'message' => 'OTP sent successfully.',
             'user_exists' => true,
-            'error' => $responseBody,
-        ], 500);
+            'otp' => $otp, // ❌ REMOVE IN PRODUCTION
+        ]);
     }
+
+    return response()->json([
+        'success' => false,
+        'message' => 'Failed to send OTP.',
+        'error' => $response->json(),
+    ], 500);
+}
 
 
     public function verifyOtp(Request $request)

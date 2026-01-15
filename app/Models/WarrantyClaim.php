@@ -14,9 +14,18 @@ class WarrantyClaim extends Model
         'company_id',
         'claim_type',
         'drop_retailer_id',
+        'pickup_address_id',
         'issue_description',
         'status',
-        'otp'
+        'otp',
+        'reason_id',
+        'inspection_report',
+        'estimate_amount',
+        'payable_amount',
+        'payment_link',
+        'payment_status',
+        'inspection_remark',
+        'claim_code'
     ];
 
     public function photos()
@@ -50,6 +59,10 @@ class WarrantyClaim extends Model
     public function coverages()
     {
         return $this->hasMany(WarrantyClaimCoverage::class, 'warranty_claim_id');
+    }
+    public function reason()
+    {
+        return $this->belongsTo(ClaimReason::class, 'reason_id');
     }
 
 }

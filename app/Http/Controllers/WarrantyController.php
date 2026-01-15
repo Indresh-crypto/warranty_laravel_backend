@@ -23,12 +23,13 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str; // ✅ MOVE HERE
+use Illuminate\Support\Str; 
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\WarrantyProductCoverage;
 use DB;
 use App\Events\WarrantyRegistered;
+use App\Events\WarrantyRegisterWhatsapp;
 
 class WarrantyController extends Controller
 {
@@ -304,7 +305,7 @@ class WarrantyController extends Controller
                     'created_by_id'    => $customer->retailer_id,
                     'created_by_name'  => $customer->name,
                     'invoice_status'   => $responseBody['invoice']['status'] ?? 'sent',
-                    'due_date' => now()->addDays(7)->toDateString(),
+                    'due_date'         => now()->addDays(7)->toDateString(),
                     'payment_terms_label' => "You need to clear the invoice within 7 days.",
                     'payment_date'     => null,
                     'invoice_amount'   => $responseBody['invoice']['total'],
@@ -350,72 +351,77 @@ class WarrantyController extends Controller
     }
 
 
-public function createDevice(Request $request)
-{
-    // 🔒 Check duplicate device
-    $exists = WDevice::where('imei1', $request->imei1)
-        ->orWhere('imei2', $request->imei2)
-        ->orWhere('serial', $request->serial)
-        ->exists();
-
-    if ($exists) {
-        return response()->json([
-            'message' => 'Device with the same IMEI or Serial already exists.'
-        ], 409);
-    }
-
-    // ✅ Step 1: Create device
-    $device = WDevice::create([
-        'name' => $request->name,
-        'imei1' => $request->imei1,
-        'imei2' => $request->imei2,
-        'serial' => $request->serial,
-        'brand_id' => $request->brand_id,
-        'category_id' => $request->category_id,
-        'product_id' => $request->product_id,
-        'product_name' => $request->product_name,
-        'brand_name' => $request->brand_name,
-        'model' => $request->model,
-        'category_name' => $request->category_name,
-        'available_claim' => $request->available_claim,
-        'expiry_date' => $request->expiry_date,
-        'w_customer_id' => $request->w_customer_id,
-        'retailer_id' => $request->retailer_id,
-        'document_url' => $request->document_url,
-        'link1' => $request->link1,
-        'link2' => $request->link2,
-        'device_price' => $request->device_price,
-        'retailer_payout' => $request->retailer_payout,
-        'employee_payout' => $request->employee_payout,
-        'other_payout' => $request->other_payout,
-        'company_payout' => $request->company_payout,
-        'product_price' => $request->product_price,
-        'agent_id' => $request->agent_id,
-        'created_by' => $request->created_by,
-        'is_approved' => 1
-    ]);
-
-    // ✅ Step 2: Generate WRT code using primary key
-    $random = strtoupper(Str::random(6)); // A9F3XQ
-    $wCode = "WRT-{$device->id}-{$random}";
-
-    // ✅ Step 3: Update device with w_code
-    $device->update([
-        'w_code' => $wCode
-    ]);
-
-    $device->load([
-    'customer',
-        'product.coverages'
-    ]);
-    
-    event(new WarrantyRegistered($device));
-    
-    return response()->json([
-        'message' => 'Device created successfully',
-        'device' => $device
-    ], 201);
-}
+    public function createDevice(Request $request)
+    {
+            // 🔒 Check duplicate device
+           $exists = WDevice::where('product_id', $request->product_id)
+            ->where(function ($query) use ($request) {
+                $query->where('imei1', $request->imei1)
+                      ->orWhere('imei2', $request->imei2)
+                      ->orWhere('serial', $request->serial);
+            })
+            ->exists();
+        
+            if ($exists) {
+                return response()->json([
+                    'message' => 'Device with the same IMEI or Serial already exists.'
+                ], 409);
+            }
+        
+            // ✅ Step 1: Create device
+            $device = WDevice::create([
+                'name' => $request->name,
+                'imei1' => $request->imei1,
+                'imei2' => $request->imei2,
+                'serial' => $request->serial,
+                'brand_id' => $request->brand_id,
+                'category_id' => $request->category_id,
+                'product_id' => $request->product_id,
+                'product_name' => $request->product_name,
+                'brand_name' => $request->brand_name,
+                'model' => $request->model,
+                'category_name' => $request->category_name,
+                'available_claim' => $request->available_claim,
+                'expiry_date' => $request->expiry_date,
+                'w_customer_id' => $request->w_customer_id,
+                'retailer_id' => $request->retailer_id,
+                'document_url' => $request->document_url,
+                'link1' => $request->link1,
+                'link2' => $request->link2,
+                'device_price' => $request->device_price,
+                'retailer_payout' => $request->retailer_payout,
+                'employee_payout' => $request->employee_payout,
+                'other_payout' => $request->other_payout,
+                'company_payout' => $request->company_payout,
+                'company_id' => $request->company_id,
+                'product_price' => $request->product_price,
+                'product_mrp' => $request->product_mrp,
+                'agent_id' => $request->agent_id,
+                'created_by' => $request->created_by,
+                'is_approved' => 1
+            ]);
+        
+            // ✅ Step 2: Generate WRT code using primary key
+            $random = strtoupper(Str::random(6)); // A9F3XQ
+            $wCode = "WRT-{$device->id}-{$random}";
+        
+            // ✅ Step 3: Update device with w_code
+            $device->update([
+                'w_code' => $wCode
+            ]);
+        
+            $device->load([
+            'customer',
+                'product.coverages'
+            ]);
+            
+           event(new WarrantyRegistered($device));
+           
+            return response()->json([
+                'message' => 'Device created successfully',
+                'device' => $device
+            ], 201);
+        }
 
     public function createBrand(Request $request)
     {
@@ -1228,6 +1234,7 @@ public function createDevice(Request $request)
         /** -------------------------
          * PDF Generation
          * ------------------------*/
+
         $pdf = Pdf::loadView('certificate', [
             'certificateId'   => $certificateId,
             'startDate'       => now()->toDateString(),
@@ -1244,9 +1251,10 @@ public function createDevice(Request $request)
             'planSummary'     => $product->features,
             'maxClaims'       => $device->available_claim,
             'coverageLimit'   => number_format($device->device_price, 2),
-            'retailerName'    => $retailer->Shop_Name,
-            'retailerCode'    => $retailer->RetailerCode,
-            'retailerAddress' => $retailer->Address,
+            'retailerName'    => $retailer->business_name,
+            'retailerCode'    => $retailer->company_code,
+            'retailerAddress' => $retailer->address_line1,
+            'retailerContact' => $retailer->contact_phone,
             'issuedOn'        => now()->toDateString(),
             'qrCode'          => $qrCode,
             'verifyUrl'       => $verifyUrl,
@@ -1267,6 +1275,8 @@ public function createDevice(Request $request)
             'certificate_link' => $certificateLink
         ]);
     
+       event(new WarrantyRegisterWhatsapp($device->fresh()));
+
         return response()->json([
             'success'         => true,
             'message'         => 'Certificate generated successfully',

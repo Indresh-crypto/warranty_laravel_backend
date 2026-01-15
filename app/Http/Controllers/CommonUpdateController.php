@@ -15,12 +15,15 @@ use GuzzleHttp\Client;
 
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use App\Jobs\SendCompanyCreatedWhatsapp;
+use App\Jobs\SendAgentPendingWhatsapp;
 
 class CommonUpdateController extends Controller
 {
   
-   public function updateOrCreate(Request $request)
+    public function updateOrCreate(Request $request)
    {
+
     $validator = Validator::make($request->all(), [
         'contact_email' => 'required|email',
         'pincode'       => 'required|digits:6',
@@ -39,7 +42,7 @@ class CommonUpdateController extends Controller
     // FIND COMPANY BY EMAIL
     // =========================
     $user = Company::where('contact_email', $request->contact_email)->first();
-
+    //SendAgentPendingWhatsapp::dispatch($user->id);
     // =========================
     // COMMON DATA
     // =========================
@@ -56,7 +59,9 @@ class CommonUpdateController extends Controller
         'owner_middle_name',
         'owner_last_name',
         'owner_email',
-        'owner_contact', "password"
+        'owner_contact', "password", "gst_json", "bank_json",
+        "bank_verified",
+        "gst_verified", "agent_code", "zoho_id"
     ]);
 
     // =========================
@@ -65,17 +70,31 @@ class CommonUpdateController extends Controller
     if ($user) {
         $user->update($data);
 
-        // Update lead package details if provided
+                // Update lead package details if provided
+        $updateData = [];
+        
+        /* ================= Package update ================= */
         if ($request->filled('package_id')) {
-            WLead::where('email', $request->contact_email)->update([
+            $updateData = [
                 'package_id'   => $request->package_id,
                 'package_name' => $request->package_name,
                 'badge_name'   => $request->badge_name,
                 'badge_id'     => $request->badge_id,
                 'benefits'     => $request->benefits,
                 'eligibility'  => $request->eligibility,
-                'lead_amount'  => $request->lead_amount
-            ]);
+                'lead_amount'  => $request->lead_amount,
+            ];
+        }
+        
+        /* ================= Status update ================= */
+        if ((int) $request->is_verified === 7) {
+            $updateData['status'] = 'won';
+        }
+        
+        /* ================= Apply update ================= */
+        if (!empty($updateData)) {
+            WLead::where('email', $request->contact_email)
+                ->update($updateData);
         }
 
         return response()->json([
@@ -118,7 +137,8 @@ class CommonUpdateController extends Controller
     
     $data['status']      = $request->status ?? 1;
     $data['is_verified'] = $request->is_verified ?? 0;
-    $data['senior_id'] = $request->senior_id ?? 0;
+    $data['senior_id'] =   $request->senior_id ?? 0;
+    $data['agent_code'] =  $request->agent_code ?? 0;
 
     // Create company
     $user = Company::create($data);
@@ -128,19 +148,22 @@ class CommonUpdateController extends Controller
     // =========================
     switch ($user->role) {
         case 5: // Retailer
-            $userCode = "RET-{$user->company_id}-{$stateIn}-{$districtIn}";
+            $userCode = "RET-{$user->id}-{$stateIn}-{$districtIn}";
+             
             break;
 
         case 4: // Agent
-            $userCode = "AGT-{$user->company_id}-{$stateIn}-{$districtIn}";
+            $userCode = "AGT-{$user->id}-{$stateIn}-{$districtIn}";
+               SendAgentPendingWhatsapp::dispatch($user->id);
             break;
 
         case 3: // CPE
-            $userCode = "CPE-{$user->company_id}-{$stateIn}-{$districtIn}";
+            $userCode = "CPE-{$user->id}-{$stateIn}-{$districtIn}";
             break;
 
         case 2: // Company
             $userCode = "COMP{$user->id}-{$stateIn}-{$districtIn}";
+             SendCompanyCreatedWhatsapp::dispatch($user->id);
             break;
 
         default:
@@ -149,7 +172,7 @@ class CommonUpdateController extends Controller
     }
 
     $user->update([
-        'user_code' => $userCode
+        'company_code' => $userCode
     ]);
 
 
@@ -183,81 +206,89 @@ class CommonUpdateController extends Controller
         return $prefix . str_pad($num, 4, '0', STR_PAD_LEFT);
     }
         
-public function getCompanies(Request $request)
-{
-    $query = Company::query();
-
-    // ---------------------------------
-    // EXACT FILTERS
-    // ---------------------------------
-    if ($request->filled('role')) {
-        $query->where('role', $request->role);
+    public function getCompanies(Request $request)
+    {
+        $query = Company::query();
+    
+        // ---------------------------------
+        // EXACT FILTERS
+        // ---------------------------------
+        if ($request->filled('role')) {
+            $query->where('role', $request->role);
+        }
+    
+        // ✅ COMPANY FILTER
+        if ($request->filled('company_id')) {
+            // If company_id is PRIMARY KEY
+            $query->where('company_id', $request->company_id);
+    
+            // OR if company_id column exists, use this instead:
+            // $query->where('company_id', $request->company_id);
+        }
+        
+         if ($request->filled('agent_code')) {
+            // If company_id is PRIMARY KEY
+            $query->where('agent_code', $request->agent_code);
+    
+            // OR if company_id column exists, use this instead:
+            // $query->where('company_id', $request->company_id);
+        }
+    
+        // ---------------------------------
+        // GLOBAL SEARCH
+        // ---------------------------------
+        if ($request->filled('search_value')) {
+            $search = $request->search_value;
+    
+            $query->where(function ($q) use ($search) {
+                $q->where('business_name', 'LIKE', "%{$search}%")
+                  ->orWhere('contact_person', 'LIKE', "%{$search}%")
+                  ->orWhere('contact_phone', 'LIKE', "%{$search}%")
+                  ->orWhere('contact_email', 'LIKE', "%{$search}%")
+                  ->orWhere('company_code', 'LIKE', "%{$search}%");
+            });
+        }
+    
+        // ---------------------------------
+        // SORTING (SAFE)
+        // ---------------------------------
+        $sortBy = $request->sort_by ?? 'id';
+        $sortOrder = strtoupper($request->sort_order ?? 'DESC');
+    
+        $allowedSorts = [
+            'id',
+            'company_name',
+            'business_name',
+            'created_at',
+            'company_id'
+        ];
+    
+        if (!in_array($sortBy, $allowedSorts)) {
+            $sortBy = 'id';
+        }
+    
+        $sortOrder = $sortOrder === 'ASC' ? 'ASC' : 'DESC';
+    
+        $query->orderBy($sortBy, $sortOrder);
+    
+        // ---------------------------------
+        // PAGINATION
+        // ---------------------------------
+        $perPage = $request->per_page ?? 10;
+        $results = $query->paginate($perPage);
+    
+        return response()->json([
+            'status'  => true,
+            'message' => 'Filtered company list fetched successfully',
+            'pagination' => [
+                'current_page' => $results->currentPage(),
+                'per_page'     => $results->perPage(),
+                'last_page'    => $results->lastPage(),
+                'total'        => $results->total()
+            ],
+            'data' => $results->items()
+        ]);
     }
-
-    // ✅ COMPANY FILTER
-    if ($request->filled('company_id')) {
-        // If company_id is PRIMARY KEY
-        $query->where('company_id', $request->company_id);
-
-        // OR if company_id column exists, use this instead:
-        // $query->where('company_id', $request->company_id);
-    }
-
-    // ---------------------------------
-    // GLOBAL SEARCH
-    // ---------------------------------
-    if ($request->filled('search_value')) {
-        $search = $request->search_value;
-
-        $query->where(function ($q) use ($search) {
-            $q->where('business_name', 'LIKE', "%{$search}%")
-              ->orWhere('contact_person', 'LIKE', "%{$search}%")
-              ->orWhere('contact_phone', 'LIKE', "%{$search}%")
-              ->orWhere('contact_email', 'LIKE', "%{$search}%")
-              ->orWhere('company_code', 'LIKE', "%{$search}%");
-        });
-    }
-
-    // ---------------------------------
-    // SORTING (SAFE)
-    // ---------------------------------
-    $sortBy = $request->sort_by ?? 'id';
-    $sortOrder = strtoupper($request->sort_order ?? 'DESC');
-
-    $allowedSorts = [
-        'id',
-        'company_name',
-        'business_name',
-        'created_at',
-        'company_id'
-    ];
-
-    if (!in_array($sortBy, $allowedSorts)) {
-        $sortBy = 'id';
-    }
-
-    $sortOrder = $sortOrder === 'ASC' ? 'ASC' : 'DESC';
-
-    $query->orderBy($sortBy, $sortOrder);
-
-    // ---------------------------------
-    // PAGINATION
-    // ---------------------------------
-    $perPage = $request->per_page ?? 10;
-    $results = $query->paginate($perPage);
-
-    return response()->json([
-        'status'  => true,
-        'message' => 'Filtered company list fetched successfully',
-        'pagination' => [
-            'current_page' => $results->currentPage(),
-            'per_page'     => $results->perPage(),
-            'last_page'    => $results->lastPage(),
-            'total'        => $results->total()
-        ],
-        'data' => $results->items()
-    ]);
-}
 
     public function upload(Request $request)
     {

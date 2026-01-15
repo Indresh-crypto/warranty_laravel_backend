@@ -10,6 +10,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
 use DB;
+use App\Events\EmployeeCreated;
+use App\Mail\EmployeeResetPasswordMail;
+use Illuminate\Support\Facades\Mail;
+
 class CompanyEmployeeController extends Controller
 {
     /**
@@ -77,6 +81,7 @@ class CompanyEmployeeController extends Controller
     $emp->employee_id = 'EMP-' . $emp->id;
     $emp->save();
 
+    event(new EmployeeCreated($emp, $plainPassword));
     return response()->json([
         'status'  => true,
         'message' => 'Employee created successfully',
@@ -460,4 +465,75 @@ class CompanyEmployeeController extends Controller
         ]);
     }
 
+public function resetEmployeePassword(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'employee_id' => 'required|string|exists:company_employee,employee_id',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    $employee = CompanyEmployee::where('employee_id', $request->employee_id)->first();
+
+    // 🔐 Generate random 6-digit password
+    $newPassword = random_int(100000, 999999);
+
+    // 🔒 Update password (hashed)
+    $employee->update([
+        'password' => Hash::make($newPassword)
+    ]);
+
+    // 📧 Send email
+    if (!empty($employee->official_email)) {
+        Mail::to($employee->official_email)
+            ->send(new EmployeeResetPasswordMail($employee, $newPassword));
+    }
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Password reset successfully. New password sent to registered email.'
+    ], 200);
+}
+
+public function setEmployeePassword(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'employee_id' => 'required|string|exists:company_employee,employee_id',
+        'password' => [
+            'required',
+            'string',
+            'min:6',
+            'confirmed' // checks password_confirmation
+        ],
+    ], [
+        'password.confirmed' => 'Password confirmation does not match'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Validation failed',
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    $employee = CompanyEmployee::where('employee_id', $request->employee_id)->first();
+
+
+    
+    $employee->update([
+        'password' => Hash::make($request->password),
+        'password_changed_at' => now()
+    ]);
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Password set successfully. You can now login with your new password.'
+    ], 200);
+}
 }

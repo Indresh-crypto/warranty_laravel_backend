@@ -19,7 +19,7 @@ class CommonAuthController extends Controller
 {
 
    public function login(Request $request)
-{
+   {
     $validator = Validator::make($request->all(), [
         'password' => 'required',
         'email'    => 'sometimes|email',
@@ -158,6 +158,63 @@ class CommonAuthController extends Controller
         'status' => true,
         'message' => 'Login successful',
         'data' => $customer->load(['addresses', 'devices', 'retailer'])
+    ], 200);
+}
+
+public function logout(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'id'        => 'nullable|integer|exists:companies,id',
+        'is_logout' => 'required|boolean',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status'  => false,
+            'message' => 'Validation failed',
+            'errors'  => $validator->errors()
+        ], 422);
+    }
+
+    // ✅ CASE 1: Logout a specific user
+    if ($request->filled('id')) {
+        Company::where('id', $request->id)
+            ->update(['is_logout' => $request->is_logout]);
+
+        return response()->json([
+            'status'  => true,
+            'message' => 'User logout status updated successfully',
+            'scope'   => 'single_user'
+        ], 200);
+    }
+
+    // ✅ CASE 2: Logout all users
+    Company::query()->update([
+        'is_logout' => $request->is_logout
+    ]);
+
+    return response()->json([
+        'status'  => true,
+        'message' => 'Logout status updated for all users',
+        'scope'   => 'all_users'
+    ], 200);
+}
+
+public function getLogoutStatus($id)
+{
+    $user = Company::select('id', 'is_logout')->find($id);
+
+    if (!$user) {
+        return response()->json([
+            'status'  => false,
+            'message' => 'User not found'
+        ], 404);
+    }
+
+    return response()->json([
+        'status'    => true,
+        'user_id'   => $user->id,
+        'is_logout' => (bool) $user->is_logout
     ], 200);
 }
 

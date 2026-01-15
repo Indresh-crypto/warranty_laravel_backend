@@ -2,69 +2,154 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<style>
-body { font-family: Arial; background:#f4f6f8; padding:20px; }
-.box { max-width:700px; margin:auto; background:#fff; border-radius:6px; }
-.header { background:#0d47a1; color:#fff; padding:20px; text-align:center; }
-.section { padding:20px; }
-table { width:100%; border-collapse:collapse; }
-td, th { border:1px solid #ddd; padding:10px; }
-.footer { background:#eee; padding:12px; text-align:center; font-size:12px; }
-</style>
+<title>Warranty Activated</title>
 </head>
-<body>
 
-<div class="box">
+<body style="margin:0; padding:0; background:#f4f6f8; font-family:Arial, Helvetica, sans-serif;">
 
-<div class="header">
-<h2>Warranty Activated</h2>
-</div>
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:20px 0;">
+<tr>
+<td align="center">
 
-<div class="section">
-<h3>Customer Details</h3>
-<table>
-<tr><th>Name</th><td>{{ $device->customer->name }}</td></tr>
-<tr><th>Email</th><td>{{ $device->customer->email }}</td></tr>
-<tr><th>Mobile</th><td>{{ $device->customer->mobile }}</td></tr>
-<tr><th>Customer Code</th><td>{{ $device->customer->c_code }}</td></tr>
+<!-- Card -->
+<table width="700" cellpadding="0" cellspacing="0"
+       style="background:#ffffff; border-radius:10px;
+              box-shadow:0 6px 20px rgba(0,0,0,0.08); overflow:hidden;">
+
+<!-- Header -->
+<tr>
+<td style="background:linear-gradient(135deg,#0d47a1,#1e88e5);
+           padding:26px; text-align:center; color:#ffffff;">
+<h1 style="margin:0; font-size:24px;">Warranty Activated ✅</h1>
+<p style="margin:8px 0 0; font-size:14px; color:#e3f2fd;">
+Your product is now protected
+</p>
+</td>
+</tr>
+
+<!-- Body -->
+<tr>
+<td style="padding:26px; color:#1f2937; font-size:14px; line-height:1.6;">
+
+<!-- Greeting -->
+<p>
+Hello <strong>{{ $device->customer->name }}</strong>,
+</p>
+<p>
+Your warranty has been successfully activated. Below are the details of your
+registered device and coverage.
+</p>
+
+<!-- Customer Details -->
+<h3 style="margin:20px 0 10px; color:#0d47a1;">Customer Details</h3>
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:collapse; font-size:13.5px;">
+<tr>
+<td style="padding:10px; background:#f9fafb; width:30%;"><strong>Name</strong></td>
+<td style="padding:10px;">{{ $device->customer->name }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Email</strong></td>
+<td style="padding:10px;">{{ $device->customer->email }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Mobile</strong></td>
+<td style="padding:10px;">{{ $device->customer->mobile }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Customer Code</strong></td>
+<td style="padding:10px;"><strong style="color:#0d47a1;">{{ $device->customer->c_code }}</strong></td>
+</tr>
 </table>
-</div>
 
-<div class="section">
-<h3>Device Details</h3>
-<table>
-<tr><th>Device</th><td>{{ $device->name }}</td></tr>
-<tr><th>Brand</th><td>{{ $device->brand_name }}</td></tr>
-<tr><th>Model</th><td>{{ $device->model }}</td></tr>
-<tr><th>IMEI</th><td>{{ $device->imei1 }}</td></tr>
-<tr><th>Warranty ID</th><td>{{ $device->w_code }}</td></tr>
+<!-- Device Details -->
+<h3 style="margin:26px 0 10px; color:#0d47a1;">Device Details</h3>
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:collapse; font-size:13.5px;">
+<tr>
+<td style="padding:10px; background:#f9fafb; width:30%;"><strong>Device Name</strong></td>
+<td style="padding:10px;">{{ $device->name }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Brand</strong></td>
+<td style="padding:10px;">{{ $device->brand_name }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Model</strong></td>
+<td style="padding:10px;">{{ $device->model }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>IMEI / Serial</strong></td>
+<td style="padding:10px;">{{ $device->imei1 }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Warranty ID</strong></td>
+<td style="padding:10px;"><strong>{{ $device->w_code }}</strong></td>
+</tr>
 </table>
-</div>
 
-<div class="section">
-<h3>Warranty Plan</h3>
-<table>
-<tr><th>Plan</th><td>{{ $device->product->name }}</td></tr>
-<tr><th>Validity</th><td>{{ $device->product->validity }} Months</td></tr>
-<tr><th>Expiry</th><td>{{ \Carbon\Carbon::parse($device->expiry_date)->format('d M Y') }}</td></tr>
-<tr><th>Claims</th><td>{{ $device->available_claim }}</td></tr>
+<!-- Warranty Plan -->
+<h3 style="margin:26px 0 10px; color:#0d47a1;">Warranty Plan</h3>
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border-collapse:collapse; font-size:13.5px;">
+<tr>
+<td style="padding:10px; background:#f9fafb; width:30%;"><strong>Plan Name</strong></td>
+<td style="padding:10px;">{{ $device->product->name }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Validity</strong></td>
+<td style="padding:10px;">{{ $device->product->validity }} Months</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Expiry Date</strong></td>
+<td style="padding:10px;">{{ \Carbon\Carbon::parse($device->expiry_date)->format('d M Y') }}</td>
+</tr>
+<tr>
+<td style="padding:10px; background:#f9fafb;"><strong>Available Claims</strong></td>
+<td style="padding:10px;">{{ $device->available_claim }}</td>
+</tr>
 </table>
-</div>
 
-<div class="section">
-<h3>Coverage</h3>
-<ul>
+<!-- Coverage -->
+<h3 style="margin:26px 0 10px; color:#0d47a1;">Coverage Includes</h3>
+<ul style="padding-left:18px; margin:10px 0; color:#374151;">
 @foreach($device->product->coverages as $c)
 <li><strong>{{ $c->title }}</strong></li>
 @endforeach
 </ul>
-</div>
 
-<div class="footer">
-© {{ date('Y') }} {{ config('app.name') }}
-</div>
+<!-- Info Note -->
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="background:#f0f9ff; border-left:4px solid #0d47a1;
+              border-radius:6px; margin-top:18px;">
+<tr>
+<td style="padding:12px; font-size:13px; color:#1e3a8a;">
+Please keep this email for future reference. Your warranty details are securely stored with us.
+</td>
+</tr>
+</table>
 
-</div>
+<p style="margin-top:20px;">
+Regards,<br>
+<strong>{{ config('app.name') }} Team</strong>
+</p>
+
+</td>
+</tr>
+
+<!-- Footer -->
+<tr>
+<td style="background:#f3f4f6; padding:14px; text-align:center;
+           font-size:12px; color:#6b7280;">
+© {{ date('Y') }} {{ config('app.name') }}. All rights reserved.
+</td>
+</tr>
+
+</table>
+
+</td>
+</tr>
+</table>
 
 </body>
 </html>

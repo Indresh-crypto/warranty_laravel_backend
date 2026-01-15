@@ -70,7 +70,7 @@ public function store(Request $request)
         'address_full'    => $request->address_full,
         'status'          => $request->status ?? 1,
         'lead_amount'     => $request->lead_amount,
-        'password'        => Hash::make($plainPassword), // ✅ hashed
+        'password'        => Hash::make($plainPassword), 
         'created_by_id'   => $request->created_by_id,
         'created_by_name' => $request->created_by_name,
         'owner_name'      => $request->owner_name,
@@ -283,58 +283,58 @@ public function store(Request $request)
     /**
      * Update status
      */
-public function updateStatus(Request $request, $id)
-{
-    $validator = Validator::make($request->all(), [
-        'status' => 'required',
-        'remark' => 'nullable|string',
-        'updated_by_id' => 'nullable|integer',
-        'updated_by_name' => 'nullable|string'
-    ],[
-        'status.required' => 'Status is required'
-    ]);
-
-    if ($validator->fails()) {
+    public function updateStatus(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'status' => 'required',
+            'remark' => 'nullable|string',
+            'updated_by_id' => 'nullable|integer',
+            'updated_by_name' => 'nullable|string'
+        ],[
+            'status.required' => 'Status is required'
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Validation error',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        $lead = WLead::find($id);
+    
+        if (!$lead) {
+            return response()->json([
+                'status' => false,
+                'message' => 'User not found'
+            ], 404);
+        }
+    
+        // Update fields
+        $lead->status = $request->status;
+    
+        if ($request->has('remark')) {
+            $lead->remark = $request->remark;
+        }
+    
+        // Optional update_by fields
+        if ($request->has('updated_by_id')) {
+            $lead->updated_by_id = $request->updated_by_id;
+        }
+    
+        if ($request->has('updated_by_name')) {
+            $lead->updated_by_name = $request->updated_by_name;
+        }
+    
+        $lead->save();
+    
         return response()->json([
-            'status'  => false,
-            'message' => 'Validation error',
-            'errors'  => $validator->errors()
-        ], 422);
+            'status'  => true,
+            'message' => 'Status updated successfully',
+            'data'    => $lead
+        ]);
     }
-
-    $lead = WLead::find($id);
-
-    if (!$lead) {
-        return response()->json([
-            'status' => false,
-            'message' => 'User not found'
-        ], 404);
-    }
-
-    // Update fields
-    $lead->status = $request->status;
-
-    if ($request->has('remark')) {
-        $lead->remark = $request->remark;
-    }
-
-    // Optional update_by fields
-    if ($request->has('updated_by_id')) {
-        $lead->updated_by_id = $request->updated_by_id;
-    }
-
-    if ($request->has('updated_by_name')) {
-        $lead->updated_by_name = $request->updated_by_name;
-    }
-
-    $lead->save();
-
-    return response()->json([
-        'status'  => true,
-        'message' => 'Status updated successfully',
-        'data'    => $lead
-    ]);
-}
 
     
     public function sendWelcomeEmail($companyId)

@@ -12,6 +12,9 @@ use App\Models\WCustomer;
 
 use App\Events\WarrantyRegistered;
 
+use App\Http\Controllers\AgreementController;
+
+
 Route::get('/', function () {
     return view('welcome');
 });
@@ -84,4 +87,18 @@ Route::get('/resend-warranty-mail/{id}', function ($id) {
 
     return 'Warranty email re-triggered';
 });
+
+
+Route::get('/test-mail', function () {
+    \Mail::raw('Email working fine', function ($m) {
+        $m->to('indresh@goelectronix.com')
+          ->subject('Test Mail');
+    });
+
+    return 'Mail sent';
+});
+
+
+Route::get('/esign/callback', [AgreementController::class, 'esignCallback'])
+    ->name('esign.callback');
 

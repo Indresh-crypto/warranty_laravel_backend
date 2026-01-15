@@ -488,4 +488,70 @@ public function verifyCustomerEmailOtp(Request $request)
     ], 200);
 }
 
+public function payouts(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'company_id'  => 'nullable|integer|exists:companies,id',
+        'retailer_id' => 'nullable|integer|exists:companies,id',
+        'agent_id'    => 'nullable|integer|exists:companies,id',
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    $query = WDevice::query();
+
+    /* ================= FILTERS ================= */
+    $query->when($request->filled('company_id'), fn ($q) =>
+        $q->where('company_id', $request->company_id)
+    );
+
+    $query->when($request->filled('retailer_id'), fn ($q) =>
+        $q->where('retailer_id', $request->retailer_id)
+    );
+
+    $query->when($request->filled('agent_id'), fn ($q) =>
+        $q->where('agent_id', $request->agent_id)
+    );
+
+    /* ================= PAYOUT COLUMN ================= */
+    // Decide payout column in PHP (NO SQL binding)
+    $earningColumn = $request->filled('agent_id')
+        ? 'employee_payout'
+        : 'retailer_payout';
+
+    /* ================= AGGREGATES ================= */
+    $summary = $query->selectRaw("
+        COUNT(*) as warranty_submitted,
+
+        COALESCE(SUM(product_price),0) as total_sales,
+
+        COALESCE(SUM(CASE WHEN invoice_id IS NULL THEN product_price ELSE 0 END),0) as pending_invoice_amount,
+        COALESCE(SUM(CASE WHEN invoice_id IS NULL THEN 1 ELSE 0 END),0) as pending_invoice_count,
+
+        COALESCE(SUM(CASE WHEN credit_note IS NOT NULL THEN product_price ELSE 0 END),0) as credit_note_amount,
+
+        COALESCE(SUM($earningColumn),0) as my_earnings
+    ")->first();
+
+    /* ================= RESPONSE ================= */
+    return response()->json([
+        'status' => true,
+        'data' => [
+            'total_sales' => (float) $summary->total_sales,
+            'pending_invoices' => [
+                'count'  => (int) $summary->pending_invoice_count,
+                'amount'=> (float) $summary->pending_invoice_amount,
+            ],
+            'credit_notes' => (float) $summary->credit_note_amount,
+            'warranty_submitted' => (int) $summary->warranty_submitted,
+            'payable_amount' => (float) $summary->total_sales,
+            'my_earnings' => (float) $summary->my_earnings,
+        ]
+    ], 200);
+}
 }

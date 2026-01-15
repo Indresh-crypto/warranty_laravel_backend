@@ -16,8 +16,13 @@ class WarrantyClaimAssignment extends Model
         'pickup_verified'
     ];
     
-     public function claim()
+    public function claim()
     {
         return $this->belongsTo(WarrantyClaim::class, 'warranty_claim_id');
+    }
+    
+    public function employee()
+    {
+        return $this->belongsTo(CompanyEmployee::class, 'employee_id', 'id');
     }
 }

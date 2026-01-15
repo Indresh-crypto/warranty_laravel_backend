@@ -11,6 +11,7 @@ use App\Models\Company;
 use PhpOffice\PhpWord\TemplateProcessor;
 use Illuminate\Support\Facades\Http;
 use DB;
+use Carbon\Carbon;
 
 class AgreementController extends Controller
 {
@@ -27,249 +28,335 @@ class AgreementController extends Controller
     
     public function generateAgreement($type, $companyId)
     {
-      
+        /* ================= FETCH COMPANY ================= */
         $company = Company::findOrFail($companyId);
-    
-        $Parentcompany = Company::where('id', $company->company_id)
-                                ->where('role', 2)
-                                ->first();
-    
-        // Determine template file
-       $templateFile = match ((string)$type) {
-            '5' => 'RetailerAgreement.docx',   // Retailer role
-            '4' => 'AgentAgreement.docx',      // Agent role
-            '2' => 'CompanyAgreement.docx',    // Company/Distributor role
+
+        /* ================= FETCH SERVICE PROVIDER (PARENT) ================= */
+       $serviceProvider = Company::where('id', $company->company_id)
+        ->where('role', 2)
+        ->first()
+            ?? Company::where('id', 1)->first();
+
+        /* ================= SELECT TEMPLATE ================= */
+        $templateFile = match ((string) $type) {
+            '5' => 'RetailerAgreement.docx',
+            '4' => 'AgentAgreement.docx',
+            '2' => 'CompanyAgreement.docx',
             default => null,
         };
-         
-      
+
         if (!$templateFile) {
             return response()->json(['error' => 'Invalid agreement type'], 400);
         }
-    
+
         $templatePath = storage_path("app/template/{$templateFile}");
-    
+
         if (!file_exists($templatePath)) {
             return response()->json(['error' => 'Template not found'], 404);
         }
-    
+
         $template = new TemplateProcessor($templatePath);
-    
-        // CHILD COMPANY PLACEHOLDERS
-        $template->setValue('id', $company->id ?? '');
-        $template->setValue('business_name', $company->business_name ?? '');
-        $template->setValue('contact_person', $company->contact_person ?? '');
-        $template->setValue('contact_phone', $company->contact_phone ?? '');
-        $template->setValue('contact_email', $company->contact_email ?? '');
-        $template->setValue('address_line1', $company->address_line1 ?? '');
-        $template->setValue('address_line2', $company->address_line2 ?? '');
-        $template->setValue('city', $company->city ?? '');
-        $template->setValue('state', $company->state ?? '');
-        $template->setValue('district', $company->district ?? '');
-        $template->setValue('pincode', $company->pincode ?? '');
-        $template->setValue('status', $company->status ?? '');
-        $template->setValue('pan', $company->pan ?? '');
-        $template->setValue('gst', $company->gst ?? '');
-        $template->setValue('business_type', $company->business_type ?? '');
-        $template->setValue('is_verified', $company->is_verified ? 'Yes' : 'No');
-        $template->setValue('is_payment_success', $company->is_payment_success ? 'Yes' : 'No');
-        $template->setValue('trade_name', $company->trade_name ?? '');
-        $template->setValue('account_no', $company->account_no ?? '');
-        $template->setValue('ifsc_code', $company->ifsc_code ?? '');
-        $template->setValue('bank_name', $company->bank_name ?? '');
-        $template->setValue('branch_name', $company->branch_name ?? '');
-        $template->setValue('role', $company->role ?? '');
-        $template->setValue('esign_verified', $company->esign_verified ? 'Yes' : 'No');
-        $template->setValue('company_id', $company->company_id ?? '');
-        $template->setValue('account_type', $company->account_type ?? '');
-        $template->setValue('created_at', $company->created_at?->format('Y-m-d H:i') ?? '');
-        $template->setValue('updated_at', $company->updated_at?->format('Y-m-d H:i') ?? '');
-    
-        // EFFECTIVE DATE
+
+        /* ================= EFFECTIVE DATE ================= */
         $effectiveDate = $company->created_at ?? now();
+
         $template->setValue('effective_day', $effectiveDate->format('d'));
         $template->setValue('effective_month', $effectiveDate->format('F'));
         $template->setValue('effective_year', $effectiveDate->format('Y'));
+
+        /* ================= PARTNER (CHILD COMPANY) ================= */
+        $partnerFullAddress =
+            ($company->address_line1 ?? '') . "\n" .
+            ($company->address_line2 ?? '') . "\n" .
+            ($company->district ?? '') . ' ' . ($company->city ?? '') . "\n" .
+            ($company->state ?? '') . ' – ' . ($company->pincode ?? '');
+
+        $ownerFullName = trim(
+            ($company->owner_first_name ?? '') . ' ' .
+            ($company->owner_middle_name ?? '') . ' ' .
+            ($company->owner_last_name ?? '')
+        );
+        
+        $now = Carbon::now()->format('d F Y');
+
+        $template->setValue('partner_business_name', $company->business_name ?? '');
+        $template->setValue('partner_trade_name', $company->trade_name ?? '');
+        $template->setValue('partner_contact_person', $company->contact_person ?? '');
+        $template->setValue('partner_contact_phone', $company->contact_phone ?? '');
+        $template->setValue('partner_contact_email', $company->contact_email ?? '');
+
+        $template->setValue('partner_signatory_name', $ownerFullName ?? '');
+  
+        $template->setValue('partner_owner_full_name', $ownerFullName);
+        $template->setValue('partner_owner_email', $company->owner_email ?? '');
+        $template->setValue('partner_owner_contact', $company->owner_contact ?? '');
+
+        $template->setValue('partner_address_line1', $company->address_line1 ?? '');
+        $template->setValue('partner_address_line2', $company->address_line2 ?? '');
+        $template->setValue('partner_city', $company->city ?? '');
+        $template->setValue('partner_district', $company->district ?? '');
+        $template->setValue('partner_state', $company->state ?? '');
+        $template->setValue('partner_pincode', $company->pincode ?? '');
+
+        $template->setValue('partner_pan', $company->pan ?? '');
+        $template->setValue('partner_gst', $company->gst ?? '');
+        $template->setValue('partner_business_type', $company->business_type ?? '');
+
+        $template->setValue('partner_account_no', $company->account_no ?? '');
+        $template->setValue('partner_ifsc', $company->ifsc_code ?? '');
+        $template->setValue('partner_bank_name', $company->bank_name ?? '');
+        $template->setValue('partner_branch_name', $company->branch_name ?? '');
+
+        $template->setValue('partner_company_code', $company->company_code ?? '');
+        $template->setValue('partner_role', $company->role ?? '');
+        $template->setValue('partner_status', $company->status ?? '');
+        $template->setValue('partner_created_at', optional($company->created_at)->format('d-m-Y'));
+
     
-        // PARENT COMPANY PLACEHOLDERS
-        if ($Parentcompany) {
-            $template->setValue('parent_business_name', $Parentcompany->business_name ?? '');
-            $template->setValue('parent_contact_person', $Parentcompany->contact_person ?? '');
-            $template->setValue('parent_contact_phone', $Parentcompany->contact_phone ?? '');
-            $template->setValue('parent_contact_email', $Parentcompany->contact_email ?? '');
-            $template->setValue('parent_address_line1', $Parentcompany->address_line1 ?? '');
-            $template->setValue('parent_address_line2', $Parentcompany->address_line2 ?? '');
-            $template->setValue('parent_city', $Parentcompany->city ?? '');
-            $template->setValue('parent_state', $Parentcompany->state ?? '');
-            $template->setValue('parent_district', $Parentcompany->district ?? '');
-            $template->setValue('parent_pincode', $Parentcompany->pincode ?? '');
-    
-            $fullParentAddress =
-                ($Parentcompany->address_line1 ?? '') . "\n" .
-                ($Parentcompany->address_line2 ?? '') . "\n" .
-                ($Parentcompany->district ?? '') . ' ' . ($Parentcompany->city ?? '') . "\n" .
-                ($Parentcompany->state ?? '') . ' – ' . ($Parentcompany->pincode ?? '') . " India";
-    
-            $template->setValue('parent_office_full_address', $fullParentAddress);
+        /* ================= SERVICE PROVIDER ================= */
+        if ($serviceProvider) {
+            
+        
+            $serviceProviderAddress =
+                ($serviceProvider->address_line1 ?? '') . "\n" .
+                ($serviceProvider->address_line2 ?? '') . "\n" .
+                ($serviceProvider->district ?? '') . ' ' . ($serviceProvider->city ?? '') . "\n" .
+                ($serviceProvider->state ?? '') . ' – ' . ($serviceProvider->pincode ?? '') . ' India';
+
+            $template->setValue('service_provider_business_name', $serviceProvider->business_name ?? '');
+            $template->setValue('service_provider_full_address', $serviceProviderAddress);
+            $template->setValue('service_provider_signatory_name', $serviceProvider->contact_person ?? '');
+            $template->setValue('service_provider_contact_email', $serviceProvider->contact_email ?? '');
+            $template->setValue('service_provider_contact_phone', $serviceProvider->contact_phone ?? '');
+            $template->setValue('agreement_date', $now ?? '');
+            
+            $template->setValue('service_provider_gst', $serviceProvider->gst ?? '');
+            $template->setValue('service_provider_pan', $serviceProvider->pan ?? '');
         }
-    
-        // CREATE DIRECTORY IF NOT EXISTS
+
+        /* ================= SAVE FILES ================= */
         $generatedPath = storage_path('app/public/generated');
-        if (!file_exists($generatedPath)) mkdir($generatedPath, 0777, true);
-    
-        // SAVE DOCX + EXPORT AS PDF
-        $outputDocx = "{$generatedPath}/{$type}Agreement{$company->id}.docx";
-        $outputPdf  = "{$generatedPath}/{$type}Agreement{$company->id}.pdf";
-    
-        $template->saveAs($outputDocx);
-        $command = 'libreoffice --headless --convert-to pdf "' . $outputDocx . '" --outdir "' . $generatedPath . '"';
+        if (!file_exists($generatedPath)) {
+            mkdir($generatedPath, 0777, true);
+        }
+
+        $docxPath = "{$generatedPath}/Agreement_{$company->id}.docx";
+        $pdfPath  = "{$generatedPath}/Agreement_{$company->id}.pdf";
+
+        $template->saveAs($docxPath);
+
+        /* ================= CONVERT TO PDF ================= */
+        $command = 'libreoffice --headless --convert-to pdf "' . $docxPath . '" --outdir "' . $generatedPath . '"';
         exec($command);
-    
-        if (!file_exists($outputPdf)) return response()->json(['error' => 'PDF conversion failed'], 500);
-    
-        return response()->json([
-            "status" => true,
-            "type"   => $type,
-            "message" => "Agreement generated successfully",
-            "download_url" => asset("storage/generated/{$type}Agreement{$company->id}.pdf")
-        ]);
-    }
-    
-public function uploadEsignDocument(Request $request, $roleId, $companyId)
-{
-    $request->validate([
-        'aadhaar_last_four_digit' => 'required|digits:4'
-    ]);
-
-    DB::beginTransaction();
-
-    try {
-        $company = Company::findOrFail($companyId);
-
-        // Prevent duplicate eSign
-        if (!empty($company->esign_json)) {
-            return response()->json([
-                "status" => false,
-                "data"   => $company,
-                "message" => "ESign already initiated for this company. Avoid duplicate requests."
-            ], 409);
-        }
-
-        // STEP 1: Generate PDF
-        $response = $this->generateAgreement($roleId, $companyId);
-
-        if (!$response->getData()?->status) {
-            return response()->json([
-                "status" => false,
-                "message" => "Agreement generation failed"
-            ], 500);
-        }
-
-        // STEP 2: Extract file path
-        $pdfUrl  = $response->getData()?->download_url;
-        $pdfPath = public_path(str_replace(asset(''), '', $pdfUrl));
 
         if (!file_exists($pdfPath)) {
-            return response()->json([
-                "status" => false,
-                "message" => "Generated PDF not found on server"
-            ], 404);
+            return response()->json(['error' => 'PDF conversion failed'], 500);
         }
 
-        // STEP 3: Upload document to Cashfree
-        $uploadResponse = Http::withHeaders([
-            'AppId'     => "170HM093HK0HG6YZ37F0X00Q4KJ6ZX",
-            'SecretKey' => "TESTPO0KGDZ2FQ8RETK88038KALUEK6AC3AS",
-            'accept'    => '*/*'
-        ])
-        ->attach('document', file_get_contents($pdfPath), basename($pdfPath))
-        ->post("https://agitated-cori.103-195-185-254.plesk.page/api/Cashfree/upload-esign-document");
+        return response()->json([
+            'status' => true,
+            'message' => 'Agreement generated successfully',
+            'download_url' => asset("storage/generated/Agreement_{$company->id}.pdf")
+        ]);
+    }
 
-        $uploadJson = $uploadResponse->json();
+    public function uploadEsignDocument(Request $request, $roleId, $companyId)
+    {
+        $request->validate([
+            'aadhaar_last_four_digit' => 'required|digits:4'
+        ]);
+    
+        DB::beginTransaction();
+    
+        try {
+            $company = Company::findOrFail($companyId);
+    
+            // Prevent duplicate eSign
+            if (!empty($company->esign_json)) {
+                return response()->json([
+                    "status" => false,
+                    "data"   => $company,
+                    "message" => "ESign already initiated for this company. Avoid duplicate requests."
+                ], 409);
+            }
+    
+            // STEP 1: Generate PDF
+            $response = $this->generateAgreement($roleId, $companyId);
+    
+            if (!$response->getData()?->status) {
+                return response()->json([
+                    "status" => false,
+                    "message" => "Agreement generation failed"
+                ], 500);
+            }
+    
+            // STEP 2: Extract file path
+            $pdfUrl  = $response->getData()?->download_url;
+            $pdfPath = public_path(str_replace(asset(''), '', $pdfUrl));
+    
+            if (!file_exists($pdfPath)) {
+                return response()->json([
+                    "status" => false,
+                    "message" => "Generated PDF not found on server"
+                ], 404);
+            }
+    
+            // STEP 3: Upload document to Cashfree
+           
+    
+                $uploadResponse = Http::withOptions([
+                    
+                  
+                    'http_version' => CURL_HTTP_VERSION_1_1, // ⬅️ IMPORTANT
+                ])
+                ->withHeaders([
+                    'AppId'     => "170VSRM5NLDT0LLU8TZRA1PRV2EIVB",
+                    'SecretKey' => "TESTT56GXPUJ9JR5UKZO4WH6PQ2F8NTM5TQ6",
+                    'accept'    => '*/*',
+                    'Expect'    => '',             // ⬅️ VERY IMPORTANT (disables 100-continue)
+                ])
+                ->attach(
+                    'document',
+                    fopen($pdfPath, 'r'),          // stream
+                    basename($pdfPath)
+                )
+                ->post('https://spillas.com/dotnet-api/Cashfree/upload-esign-document');
+                
+            $uploadJson = $uploadResponse->json();
+    
+            if (empty($uploadJson['document_id'])) {
+                \Log::error("Cashfree Upload Error: " . $uploadResponse->body());
+    
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Cashfree upload failed',
+                    'api_response' => $uploadJson
+                ], 500);
+            }
+                
+                $signPage = match ((int) $company->role) {
+                2 => 14,  // Company agreement
+                4 => 11,  // Agent agreement
+                5 => 10, // Retailer agreement
+                default => 1, // fallback safety
+            };
 
-        if (empty($uploadJson['document_id'])) {
-            \Log::error("Cashfree Upload Error: " . $uploadResponse->body());
-
-            return response()->json([
-                'status' => false,
-                'message' => 'Cashfree upload failed',
-                'api_response' => $uploadJson
-            ], 500);
-        }
-
-        // STEP 4: Create eSign request
-        $esignPayload = [
-            "verification_id" => $company->pan,
-            "document_id"     => $uploadJson['document_id'],
-            "notification_modes" => ["email"],
-            "auth_type" => "AADHAAR",
-            "expiry_in_days" => "10",
-            "capture_location" => true,
-            "redirect_url" => "https://yourdomain.com/esign/callback?company_id=".$companyId,
-            "signers" => [
-                [
-                    "name"  => $company->business_name,
-                    "email" => $company->contact_email,
-                    "phone" => $company->contact_phone,
-                    "sequence" => 1,
-                    "aadhaar_last_four_digit" => $request->aadhaar_last_four_digit,
-                    "sign_positions" => [
-                        [
-                            "page" => 1,
-                            "top_left_x_coordinate" => 350,
-                            "bottom_right_x_coordinate" => 550,
-                            "top_left_y_coordinate" => 700,
-                            "bottom_right_y_coordinate" => 770
+            // STEP 4: Create eSign request
+            $esignPayload = [
+                "verification_id" => $company->pan,
+                "document_id"     => $uploadJson['document_id'],
+                "notification_modes" => ["email"],
+                "auth_type" => "AADHAAR",
+                "expiry_in_days" => "10",
+                "capture_location" => true,
+                "redirect_url" => url('/esign/callback?company_id='.$companyId),
+                "signers" => [
+                    [
+                        "name"  => $company->business_name,
+                        "email" => $company->contact_email,
+                        "phone" => $company->contact_phone,
+                        "sequence" => 1,
+                        "aadhaar_last_four_digit" => $request->aadhaar_last_four_digit,
+                        "sign_positions" => [
+                            [
+                                "page" => $signPage,
+                                "top_left_x_coordinate" => 250,
+                                "bottom_right_x_coordinate" => 450,
+                                "top_left_y_coordinate" => 760,
+                                "bottom_right_y_coordinate" => 820
+                            ]
                         ]
                     ]
                 ]
-            ]
-        ];
-
-        $esignResponse = Http::withHeaders([
-            'AppId'      => "170HM093HK0HG6YZ37F0X00Q4KJ6ZX",
-            'SecretKey'  => "TESTPO0KGDZ2FQ8RETK88038KALUEK6AC3AS",
-            'accept'     => '*/*'
-        ])
-        ->post("https://agitated-cori.103-195-185-254.plesk.page/api/Cashfree/create-esign", $esignPayload);
-
-        $esignJson = $esignResponse->json();
-
-        if ($esignResponse->failed()) {
-            \Log::error("Cashfree eSign Error: " . $esignResponse->body());
-
+            ];
+    
+            $esignResponse = Http::withHeaders([
+                'AppId'     => "170VSRM5NLDT0LLU8TZRA1PRV2EIVB",
+                'SecretKey' => "TESTT56GXPUJ9JR5UKZO4WH6PQ2F8NTM5TQ6",
+                'accept'     => '*/*'
+            ])
+            ->post("https://spillas.com/dotnet-api/Cashfree/create-esign", $esignPayload);
+    
+            $esignJson = $esignResponse->json();
+    
+            if ($esignResponse->failed()) {
+                \Log::error("Cashfree eSign Error: " . $esignResponse->body());
+    
+                return response()->json([
+                    "status" => false,
+                    "message" => "Failed to create eSign request",
+                    "api_response" => $esignJson
+                ], 500);
+            }
+    
+            // STEP 5: Update DB only if everything successful
+            $company->update([
+                'document_id' => $uploadJson['document_id'],
+                'esign_json'  => json_encode($esignJson)
+            ]);
+    
+            DB::commit();
+    
+            return response()->json([
+                "status" => true,
+                "message" => "eSign request started successfully",
+                "upload_response" => $uploadJson,
+                "esign_response"  => $esignJson
+            ]);
+    
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            \Log::error("ESIGN SYSTEM ERROR: " . $e->getMessage());
+    
             return response()->json([
                 "status" => false,
-                "message" => "Failed to create eSign request",
-                "api_response" => $esignJson
+                "message" => "Unexpected server failure",
+                "error" => $e->getMessage()
             ], 500);
         }
-
-        // STEP 5: Update DB only if everything successful
-        $company->update([
-            'document_id' => $uploadJson['document_id'],
-            'esign_json'  => json_encode($esignJson)
-        ]);
-
-        DB::commit();
-
-        return response()->json([
-            "status" => true,
-            "message" => "eSign request started successfully",
-            "upload_response" => $uploadJson,
-            "esign_response"  => $esignJson
-        ]);
-
-    } catch (\Throwable $e) {
-        DB::rollBack();
-        \Log::error("ESIGN SYSTEM ERROR: " . $e->getMessage());
-
-        return response()->json([
-            "status" => false,
-            "message" => "Unexpected server failure",
-            "error" => $e->getMessage()
-        ], 500);
     }
-}
+    
+    public function esignCallback(Request $request)
+    {
+        $companyId = $request->query('company_id');
+        $status    = $request->query('status'); // depends on provider
+        $requestId = $request->query('request_id'); // optional
+    
+        if (!$companyId) {
+            return response()->view('esign.failed', [
+                'message' => 'Invalid callback request'
+            ]);
+        }
+    
+        $company = Company::find($companyId);
+    
+        if (!$company) {
+            return response()->view('esign.failed', [
+                'message' => 'Company not found'
+            ]);
+        }
+    
+        /**
+         * Provider usually sends:
+         * status = success | failed | cancelled
+         */
+        if (in_array($status, ['success', 'signed', 'completed'])) {
+    
+            $company->update([
+                'esign_verified' => 1,
+                'status'         => 'active'
+            ]);
+    
+            return response()->view('esign.success', [
+                'company' => $company
+            ]);
+        }
+    
+        // FAILED / CANCELLED
+        return response()->view('esign.failed', [
+            'company' => $company,
+            'message' => 'eSign was not completed'
+        ]);
+    }
 }
 
