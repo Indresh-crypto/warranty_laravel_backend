@@ -55,7 +55,13 @@ class WDevice extends Model
         'w_code',
         'whatsapp_sent',
         'whatsapp_sent_at',
-        'product_mrp'
+        'product_mrp',
+        'invoice_created_date_parent',
+        'invoice_id_parent',
+        'invoice_status_parent',
+        'invoice_status',
+        'invoice_json_parent',
+        'invoice_json'
         
     ];
 
@@ -77,6 +83,4 @@ class WDevice extends Model
     {
         return $this->belongsTo(Company::class, 'promoter_id');
     }
-
-
 }

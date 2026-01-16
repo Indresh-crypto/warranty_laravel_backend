@@ -61,7 +61,7 @@ class CommonUpdateController extends Controller
         'owner_email',
         'owner_contact', "password", "gst_json", "bank_json",
         "bank_verified",
-        "gst_verified", "agent_code", "zoho_id"
+        "gst_verified", "agent_code", "zoho_id", "agent_id"
     ]);
 
     // =========================
@@ -217,10 +217,15 @@ class CommonUpdateController extends Controller
             $query->where('role', $request->role);
         }
     
-        // ✅ COMPANY FILTER
         if ($request->filled('company_id')) {
-            // If company_id is PRIMARY KEY
             $query->where('company_id', $request->company_id);
+    
+            // OR if company_id column exists, use this instead:
+            // $query->where('company_id', $request->company_id);
+        }
+         if ($request->filled('id')) {
+            // If company_id is PRIMARY KEY
+            $query->where('id', $request->id);
     
             // OR if company_id column exists, use this instead:
             // $query->where('company_id', $request->company_id);
@@ -229,6 +234,14 @@ class CommonUpdateController extends Controller
          if ($request->filled('agent_code')) {
             // If company_id is PRIMARY KEY
             $query->where('agent_code', $request->agent_code);
+    
+            // OR if company_id column exists, use this instead:
+            // $query->where('company_id', $request->company_id);
+        }
+        
+         if ($request->filled('senior_id')) {
+            // If company_id is PRIMARY KEY
+            $query->where('senior_id', $request->senior_id);
     
             // OR if company_id column exists, use this instead:
             // $query->where('company_id', $request->company_id);

@@ -38,6 +38,8 @@ class WLead extends Model   // <-- FIXED casing
         'lead_code',
         'manager_id',
         'formdata',
-        'form_ref'
+        'form_ref',
+        'agent_id'
+        
     ];
 }

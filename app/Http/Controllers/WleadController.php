@@ -32,6 +32,8 @@ public function store(Request $request)
         'created_by_name' => 'required',
         'owner_name'    => 'required',
         'lead_type'     => 'required',
+        'manager_id'     => 'nullable',
+        'agent_id'     => 'nullable',
         'pincode'       => 'required|digits:6'
     ]);
 
@@ -83,6 +85,7 @@ public function store(Request $request)
         'eligibility'     => $request->eligibility,
         'company_id'      => $request->company_id,
         'manager_id'      => $request->manager_id,
+        'agent_id'        => $request->agent_id,
         'state_in'        => $stateIn,
         'district_in'     => $districtIn,
         'formdata'        => $request->formdata,

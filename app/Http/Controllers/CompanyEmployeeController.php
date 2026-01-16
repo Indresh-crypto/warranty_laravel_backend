@@ -78,6 +78,7 @@ class CompanyEmployeeController extends Controller
     | 2. UPDATE employee_id AS EMP-{ID}
     |--------------------------------------------------------------------------
     */
+    $plainPassword= $request->password;
     $emp->employee_id = 'EMP-' . $emp->id;
     $emp->save();
 

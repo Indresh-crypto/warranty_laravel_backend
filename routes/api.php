@@ -196,6 +196,10 @@ use App\Http\Controllers\RazorpayWebhookController;
         Route::get('/promoter-wise-sales-list', [WarrantyCardBuilderController::class, 'promoterWiseSalesList']);
 
         Route::get('/generate-retailer-invoices', [WarrantyInvoiceController::class, 'createBulkInvoicesRetailerWise']);
+        
+        Route::get('/generate-company-invoices', [WarrantyInvoiceController::class, 'createBulkInvoicesCompanyOnlyWise']);
+
+
         Route::get('/sale-records', [WCustomerController::class, 'deviceAnalytics']);
         
         Route::post('/customer/send-email-otp', [WCustomerController::class, 'sendCustomerEmailOtp']);
@@ -258,6 +262,9 @@ use App\Http\Controllers\RazorpayWebhookController;
 
     Route::post('/cancel-invoice', [WarrantyInvoiceController::class, 'cancelWarrantyAndCreateCreditNote']);
 
+    Route::get('/sync-company-w-invoice', [WarrantyInvoiceController::class, 'syncRetailerInvoicesFromZoho']);
+
+    Route::get('/sync-admin-w-invoice', [WarrantyInvoiceController::class, 'syncParentInvoicesFromZoho']);
 
     Route::post('/pro-customers/store', [DummyCustomerController::class, 'store']);
     Route::get('/pro-customers', [DummyCustomerController::class, 'index']);

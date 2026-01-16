@@ -67,7 +67,8 @@ class Company extends Model
         'gst_verified',
         'agent_code',
         'payment_type',
-        'is_logout'
+        'is_logout',
+        'agent_id'
 
     ];
 
