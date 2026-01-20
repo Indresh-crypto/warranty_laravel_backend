@@ -62,7 +62,9 @@ class WDevice extends Model
         'invoice_status',
         'invoice_json_parent',
         'invoice_json',
-        'is_pay_later'
+        'is_pay_later',
+        'payment_json',
+        'payment_id'
         
     ];
 

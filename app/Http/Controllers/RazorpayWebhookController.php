@@ -159,6 +159,8 @@ class RazorpayWebhookController extends Controller
                 'retailer_id' => $payment['notes']['retailer_id'],
                 'agent_id' => $payment['notes']['agent_id'],
                 'w_customer_id' => $payment['notes']['w_customer_id'],
+                'link1' => $payment['notes']['link1'],
+                'document_url' => $payment['notes']['document_url']
             ];
 
              Log::error('WARRANTY JOB DISPATCHING', [

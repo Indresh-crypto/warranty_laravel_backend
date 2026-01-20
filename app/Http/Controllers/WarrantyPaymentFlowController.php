@@ -109,14 +109,8 @@ class WarrantyPaymentFlowController extends Controller
 }
 
 
-    public function createWarrantyInvoice(
-        $device,
-        $company_id,
-        $retailer_id,
-        $product_id,
-        $payment_id,
-        $amount
-    ) {
+    public function createWarrantyInvoice($device,$company_id,$retailer_id,$product_id,$payment_id,$amount) 
+    {
         try {
     
             // ==========================
@@ -267,5 +261,30 @@ class WarrantyPaymentFlowController extends Controller
    
     return json_decode($response->getBody(), true);
     }
+    
+   public function sendZohoInvoice($company_id, $invoiceId)
+{
+    $company = \App\Models\Company::find($company_id);
+
+    if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+        throw new \Exception('Zoho org credentials missing');
+    }
+
+    $client = new \GuzzleHttp\Client();
+
+    $response = $client->post(
+        "https://www.zohoapis.in/books/v3/invoices/{$invoiceId}/status/sent",
+        [
+            'headers' => [
+                'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token
+            ],
+            'query' => [
+                'organization_id' => $company->zoho_org_id
+            ]
+        ]
+    );
+
+    return json_decode($response->getBody(), true);
+}
 
 }

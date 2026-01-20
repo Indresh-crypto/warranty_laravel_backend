@@ -122,7 +122,7 @@ class WarrantyPricingService
 
         return [
 
-            'product_price' => round($productPrice, 2),
+            'product_price' => round($retailerPending, 2),
 
             'retailer_payout' => round($retailerPayout, 2),
             'employee_payout' => round($employeePayout, 2),

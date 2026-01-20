@@ -4,6 +4,8 @@ namespace App\Jobs;
 
 use App\Models\WarrantyFlowLog;
 use App\Models\WDevice;
+use App\Models\Brand;
+use App\Models\Category;
 use App\Models\WCustomer;
 use App\Models\DeviceModel;
 use App\Models\WarrantyProduct;
@@ -219,6 +221,9 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
+            $brand =    Brand::find($brandId);
+            $category = Category::find($categoryId);
+            
             $device->update([
 
                 // Customer
@@ -229,6 +234,8 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                 'category_id' => $categoryId,
                 'model'       => $modelName,
                 'device_price'=> $devicePrice,
+                'brand_name'  => $brand->name,
+                'category_name'  => $category->name,
 
                 // Warranty product
                 'product_name' => $product->name,
@@ -279,6 +286,25 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     throw new \Exception($invoiceResult['message'] ?? 'Invoice creation failed');
                 }
 
+                    $zohoInvoice = $invoiceResult['invoice'];
+                    
+                    // ============================
+                    // UPDATE DEVICE INVOICE DATA
+                    // ============================
+                    
+                    $device->update([
+                    
+                        'invoice_id' => $zohoInvoice['invoice_id'],
+                    
+                        'invoice_created_date' => $zohoInvoice['date'] 
+                            ?? now()->toDateString(),
+                    
+                        'invoice_status' => $zohoInvoice['status'] 
+                            ?? 'created',
+                    
+                        'invoice_json' => json_encode($zohoInvoice)
+                    ]);
+
                 WarrantyFlowLog::create([
                     'payment_id' => $paymentId,
                     'device_id' => $device->id,
@@ -288,6 +314,42 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     'response_data' => json_encode($invoiceResult)
                 ]);
             }
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | STEP 3.5 : SEND ZOHO INVOICE (MARK AS SENT)
+                |--------------------------------------------------------------------------
+                */
+                
+                if (!WarrantyFlowLog::where('payment_id', $paymentId)
+                    ->where('step', 'INVOICE_SENT')
+                    ->exists()) {
+                
+                    $sendResponse = app(WarrantyPaymentFlowController::class)
+                        ->sendZohoInvoice(
+                            $this->payload['company_id'],
+                            $device->invoice_id
+                        );
+                
+                    // ==========================
+                    // UPDATE DEVICE STATUS
+                    // ==========================
+                
+                    $device->update([
+                
+                        'invoice_status' => 'sent',
+                    ]);
+                
+                    WarrantyFlowLog::create([
+                        'payment_id' => $paymentId,
+                        'device_id' => $device->id,
+                        'invoice_id' => $device->invoice_id,
+                        'step' => 'INVOICE_SENT',
+                        'status' => 1,
+                        'response_data' => json_encode($sendResponse)
+                    ]);
+                }
 
             /*
             |--------------------------------------------------------------------------
@@ -316,6 +378,54 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     'payment_id' => $paymentId,
                     'invoice_id' => $invoiceId,
                     'zoho_payment_id' => $zohoResponse['payment']['payment_id'] ?? null,
+                    'step' => 'ZOHO_PAYMENT_CREATED',
+                    'status' => 1,
+                    'response_data' => json_encode($zohoResponse)
+                ]);
+            }
+
+
+            if (!WarrantyFlowLog::where('payment_id', $paymentId)
+                ->where('step', 'ZOHO_PAYMENT_CREATED')
+                ->exists()) {
+            
+                $invoiceId = WarrantyFlowLog::where('payment_id', $paymentId)
+                    ->where('step', 'INVOICE_CREATED')
+                    ->value('invoice_id');
+            
+                $zohoResponse = app(WarrantyPaymentFlowController::class)
+                    ->createZohoPayment(
+                        $this->payload['company_id'],   // Zoho org
+                        $this->payload['retailer_id'],  // Zoho customer
+                        $paymentId,
+                        $this->payload['amount'],
+                        $invoiceId
+                    );
+            
+                $zohoPayment = $zohoResponse['payment'] ?? null;
+            
+                if (!$zohoPayment) {
+                    throw new \Exception('Zoho payment creation failed');
+                }
+            
+                // ==========================
+                // UPDATE DEVICE PAYMENT DATA
+                // ==========================
+            
+                $device->update([
+            
+                    'payment_id' => $zohoPayment['payment_id'],
+            
+                    'payment_json' => json_encode($zohoPayment),
+            
+                    // Invoice now fully paid
+                    'invoice_status' => 'paid'
+                ]);
+            
+                WarrantyFlowLog::create([
+                    'payment_id' => $paymentId,
+                    'invoice_id' => $invoiceId,
+                    'zoho_payment_id' => $zohoPayment['payment_id'],
                     'step' => 'ZOHO_PAYMENT_CREATED',
                     'status' => 1,
                     'response_data' => json_encode($zohoResponse)
