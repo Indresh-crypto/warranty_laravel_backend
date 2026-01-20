@@ -68,8 +68,15 @@ class Company extends Model
         'agent_code',
         'payment_type',
         'is_logout',
-        'agent_id'
-
+        'agent_id',
+        'pay_now',
+        'pay_later',
+        'admin_paynow_status',
+        'admin_paylater_status',
+        'admin_status_change_date',
+        'auto_status_change_date',
+        'logo',
+        'domain'
     ];
 
     protected $hidden = ['password'];

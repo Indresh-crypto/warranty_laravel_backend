@@ -61,7 +61,8 @@ class WDevice extends Model
         'invoice_status_parent',
         'invoice_status',
         'invoice_json_parent',
-        'invoice_json'
+        'invoice_json',
+        'is_pay_later'
         
     ];
 
@@ -69,6 +70,11 @@ class WDevice extends Model
     {
         return $this->belongsTo(WCustomer::class, 'w_customer_id');
     }
+    public function customerWithImei()
+    {
+        return $this->belongsTo(WCustomer::class, 'imei1');
+    }
+    
     public function product()
     {
         return $this->belongsTo(WarrantyProduct::class, 'product_id');

@@ -159,6 +159,9 @@ class CompanyController extends Controller
         ->when($request->status, function ($q) use ($request) {
             $q->where('status', $request->status);
         })
+        ->when($request->status, function ($q) use ($request) {
+            $q->where('domain', $request->domain);
+        })
 
         ->when($request->is_verified, function ($q) use ($request) {
             $q->where('is_verified', $request->is_verified);
@@ -256,5 +259,49 @@ class CompanyController extends Controller
             'status' => true,
             'data'   => $retailers
         ]);
+    }
+    public function update(Request $request, $id)
+    {
+        $company = Company::find($id);
+
+        if (!$company) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Company not found'
+            ], 404);
+        }
+
+        $data = $request->only($company->getFillable());
+
+        if (empty($data)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'No valid fields provided for update'
+            ], 422);
+        }
+
+        $validator = Validator::make($data, [
+            'contact_email' => 'nullable|email',
+            'contact_phone' => 'nullable|digits_between:8,15',
+            'pincode'       => 'nullable|digits:6',
+            'pan'           => 'nullable|string|max:20',
+            'gst'           => 'nullable|string|max:20',
+            'domain'        => 'nullable|url',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $company->update($data);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Company updated successfully',
+            'data' => $company->fresh()
+        ], 200);
     }
 }

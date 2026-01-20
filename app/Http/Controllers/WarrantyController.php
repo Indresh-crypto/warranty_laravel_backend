@@ -198,6 +198,7 @@ class WarrantyController extends Controller
 
     // ✅ Check overlapping price range
     $exists = PriceTemplate::where('warranty_product_id', $request->warranty_product_id)
+        ->where('company_id', $request->company_id)
         ->where(function ($query) use ($request) {
             $query->whereBetween('min_price', [$request->min_price, $request->max_price])
                   ->orWhereBetween('max_price', [$request->min_price, $request->max_price])
@@ -398,7 +399,8 @@ class WarrantyController extends Controller
                 'product_mrp' => $request->product_mrp,
                 'agent_id' => $request->agent_id,
                 'created_by' => $request->created_by,
-                'is_approved' => 1
+                'is_approved' => 1,
+                'is_pay_later'=>$request->is_pay_later
             ]);
         
             // ✅ Step 2: Generate WRT code using primary key
@@ -1203,87 +1205,106 @@ class WarrantyController extends Controller
         ]);
     }
 
-    public function generateDeviceCertificate(Request $request)
-    {
-    
-        $device = WDevice::with(['customer'])->find($request->w_id);
-    
-        if (!$device) {
-            return response()->json([
-                'message' => 'Device not found'
-            ], 404);
-        }
-    
-        $customer = WCustomer::find($device->w_customer_id);
-        $retailer = Company::where('id', $device->retailer_id)->first();
-        $product  = WarrantyProduct::find($device->product_id);
-    
-        if (!$customer || !$retailer || !$product) {
-            return response()->json([
-                'message' => 'Related data missing for certificate generation'
-            ], 422);
-        }
-    
-        /** -------------------------
-         * Certificate Details
-         * ------------------------*/
-        $certificateId = 'GX-WNTY-' . now()->year . '-' . str_pad($device->id, 5, '0', STR_PAD_LEFT);
-        $verifyUrl = "https://verify.goelectronix.in/cert/{$certificateId}";
-        $qrCode = "1";
-    
-        /** -------------------------
-         * PDF Generation
-         * ------------------------*/
+ 
+ public function generateDeviceCertificate(Request $request)
+{
+   
+      $validator = Validator::make($request->all(), [
+        'imei1' => 'required'
+    ]);
 
-        $pdf = Pdf::loadView('certificate', [
-            'certificateId'   => $certificateId,
-            'startDate'       => now()->toDateString(),
-            'endDate'         => Carbon::parse($device->expiry_date)->toDateString(),
-            'customerName'    => $customer->name,
-            'customerPhone'   => $customer->mobile,
-            'brand'           => $device->brand_name,
-            'model'           => $device->model,
-            'category'        => $device->category_name,
-            'imei1'           => $device->imei1,
-            'serial'          => $device->serial,
-            'purchaseDate'    => now()->toDateString(),
-            'planName'        => $product->name,
-            'planSummary'     => $product->features,
-            'maxClaims'       => $device->available_claim,
-            'coverageLimit'   => number_format($device->device_price, 2),
-            'retailerName'    => $retailer->business_name,
-            'retailerCode'    => $retailer->company_code,
-            'retailerAddress' => $retailer->address_line1,
-            'retailerContact' => $retailer->contact_phone,
-            'issuedOn'        => now()->toDateString(),
-            'qrCode'          => $qrCode,
-            'verifyUrl'       => $verifyUrl,
-        ])->setPaper('a4', 'portrait');
-    
-        /** -------------------------
-         * Store PDF
-         * ------------------------*/
-        $pdfPath = "warranty_pdfs/{$certificateId}.pdf";
-        Storage::disk('public')->put($pdfPath, $pdf->output());
-    
-        $certificateLink = Storage::disk('public')->url($pdfPath);
-    
-        /** -------------------------
-         * Update Device
-         * ------------------------*/
-        $device->update([
-            'certificate_link' => $certificateLink
-        ]);
-    
-       event(new WarrantyRegisterWhatsapp($device->fresh()));
-
+    if ($validator->fails()) {
         return response()->json([
-            'success'         => true,
-            'message'         => 'Certificate generated successfully',
-            'certificate_id'  => $certificateId,
-            'certificate_url' => $certificateLink
-        ]);
+            'success' => false,
+            'message' => $validator->errors()->first(),
+            'errors'  => $validator->errors()
+        ], 422);
     }
+
+
+
+    // Get device by IMEI
+    $device = WDevice::with('customer')
+        ->where('imei1', $request->imei1)
+        ->first();
+
+    if (!$device) {
+        return response()->json([
+            'message' => 'Device not found'
+        ], 404);
+    }
+
+    // Relations
+    $customer = $device->customer; // relation
+    $retailer = Company::find($device->retailer_id);
+    $product  = WarrantyProduct::find($device->product_id);
+
+    if (!$customer || !$retailer || !$product) {
+        return response()->json([
+            'message' => 'Related data missing for certificate generation'
+        ], 422);
+    }
+
+    /** -------------------------
+     * Certificate Details
+     * ------------------------*/
+    $certificateId = 'GX-WNTY-' . now()->year . '-' . str_pad($device->id, 5, '0', STR_PAD_LEFT);
+    $verifyUrl = "https://verify.goelectronix.in/cert/{$certificateId}";
+    $qrCode = "1";
+
+    /** -------------------------
+     * PDF Generation
+     * ------------------------*/
+    $pdf = Pdf::loadView('certificate', [
+        'certificateId'   => $certificateId,
+        'startDate'       => now()->toDateString(),
+        'endDate'         => Carbon::parse($device->expiry_date)->toDateString(),
+        'customerName'    => $customer->name,
+        'customerPhone'   => $customer->mobile,
+        'brand'           => $device->brand_name,
+        'model'           => $device->model,
+        'category'        => $device->category_name,
+        'imei1'           => $device->imei1,
+        'serial'          => $device->serial,
+        'purchaseDate'    => now()->toDateString(),
+        'planName'        => $product->name,
+        'planSummary'     => $product->features,
+        'maxClaims'       => $device->available_claim,
+        'coverageLimit'   => number_format($device->device_price, 2),
+        'retailerName'    => $retailer->business_name,
+        'retailerCode'    => $retailer->company_code,
+        'retailerAddress' => $retailer->address_line1,
+        'retailerContact' => $retailer->contact_phone,
+        'issuedOn'        => now()->toDateString(),
+        'qrCode'          => $qrCode,
+        'verifyUrl'       => $verifyUrl,
+    ])->setPaper('a4', 'portrait');
+
+    /** -------------------------
+     * Store PDF
+     * ------------------------*/
+    $pdfPath = "warranty_pdfs/{$certificateId}.pdf";
+    Storage::disk('public')->put($pdfPath, $pdf->output());
+
+    $certificateLink = Storage::disk('public')->url($pdfPath);
+
+    /** -------------------------
+     * Update Device
+     * ------------------------*/
+    $device->update([
+        'certificate_link' => $certificateLink
+    ]);
+
+    event(new WarrantyRegisterWhatsapp($device->fresh()));
+
+    return response()->json([
+        'success'         => true,
+        'message'         => 'Certificate generated successfully',
+        'certificate_id'  => $certificateId,
+        'certificate_url' => $certificateLink
+    ]);
+}
+
    public function assignProduct(Request $request)
   {
     $validator = Validator::make($request->all(), [

@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Jobs\SendCompanyCreatedWhatsapp;
 use App\Jobs\SendAgentPendingWhatsapp;
+use App\Models\CompanyApiLog;
 
 class CommonUpdateController extends Controller
 {
@@ -61,7 +62,7 @@ class CommonUpdateController extends Controller
         'owner_email',
         'owner_contact', "password", "gst_json", "bank_json",
         "bank_verified",
-        "gst_verified", "agent_code", "zoho_id", "agent_id"
+        "gst_verified", "agent_code", "zoho_id", "agent_id", "pay_now", "pay_later", "logo", "domain"
     ]);
 
     // =========================
@@ -219,32 +220,23 @@ class CommonUpdateController extends Controller
     
         if ($request->filled('company_id')) {
             $query->where('company_id', $request->company_id);
-    
-            // OR if company_id column exists, use this instead:
-            // $query->where('company_id', $request->company_id);
         }
          if ($request->filled('id')) {
             // If company_id is PRIMARY KEY
             $query->where('id', $request->id);
-    
-            // OR if company_id column exists, use this instead:
-            // $query->where('company_id', $request->company_id);
         }
         
          if ($request->filled('agent_code')) {
-            // If company_id is PRIMARY KEY
             $query->where('agent_code', $request->agent_code);
-    
-            // OR if company_id column exists, use this instead:
-            // $query->where('company_id', $request->company_id);
+
+        }
+        
+        if ($request->filled('agent_id')) {
+            $query->where('agent_id', $request->agent_id);
         }
         
          if ($request->filled('senior_id')) {
-            // If company_id is PRIMARY KEY
             $query->where('senior_id', $request->senior_id);
-    
-            // OR if company_id column exists, use this instead:
-            // $query->where('company_id', $request->company_id);
         }
     
         // ---------------------------------
@@ -546,6 +538,47 @@ class CommonUpdateController extends Controller
         'status'     => true,
         'message'    => 'User code generated successfully',
         'user_code'  => $userCode
+    ]);
+}
+
+public function updateDynamicFieldsCompany(Request $request, $id)
+{
+    $company = Company::findOrFail($id);
+
+    // Only allow fillable fields
+    $data = $request->only($company->getFillable());
+
+    // Update company
+    $company->update($data);
+
+    // 🔹 LOG API CALL
+    CompanyApiLog::create([
+        'company_id' => $company->id,
+        'api_name'   => 'updateDynamicFieldsCompany',
+        'method'     => $request->method(),
+        'url'        => $request->fullUrl(),
+        'payload'    => $request->all(),
+        'ip_address' => $request->ip(),
+        'user_agent' => $request->userAgent(),
+    ]);
+
+    return response()->json([
+        'status'  => true,
+        'message' => 'Company updated successfully',
+        'data'    => $company
+    ]);
+}
+public function getCompanyApiLogs(Request $request, $companyId)
+{
+    $perPage = $request->get('per_page', 10);
+
+    $logs = CompanyApiLog::where('company_id', $companyId)
+        ->orderBy('id', 'desc')
+        ->paginate($perPage);
+
+    return response()->json([
+        'status' => true,
+        'data'   => $logs
     ]);
 }
 }

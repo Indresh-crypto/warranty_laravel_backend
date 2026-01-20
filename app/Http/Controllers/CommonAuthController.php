@@ -151,9 +151,6 @@ class CommonAuthController extends Controller
         ]);
     }
 
-    // 🔐 Generate API token (Sanctum)
-   
-
     return response()->json([
         'status' => true,
         'message' => 'Login successful',

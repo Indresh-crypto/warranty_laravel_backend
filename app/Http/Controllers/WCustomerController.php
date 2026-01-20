@@ -525,18 +525,37 @@ public function payouts(Request $request)
         : 'retailer_payout';
 
     /* ================= AGGREGATES ================= */
-    $summary = $query->selectRaw("
-        COUNT(*) as warranty_submitted,
+   $summary = $query->selectRaw("
+    COUNT(*) as warranty_submitted,
 
-        COALESCE(SUM(product_price),0) as total_sales,
+    COALESCE(SUM(CASE 
+        WHEN invoice_status != 'paid' THEN product_price 
+        ELSE 0 
+    END), 0) as total_sales,
 
-        COALESCE(SUM(CASE WHEN invoice_id IS NULL THEN product_price ELSE 0 END),0) as pending_invoice_amount,
-        COALESCE(SUM(CASE WHEN invoice_id IS NULL THEN 1 ELSE 0 END),0) as pending_invoice_count,
+    COALESCE(SUM(CASE 
+        WHEN invoice_status = 'paid' THEN product_price 
+        ELSE 0 
+    END), 0) as payable_amount,
 
-        COALESCE(SUM(CASE WHEN credit_note IS NOT NULL THEN product_price ELSE 0 END),0) as credit_note_amount,
+    COALESCE(SUM(CASE 
+        WHEN invoice_id IS NULL THEN product_price 
+        ELSE 0 
+    END), 0) as pending_invoice_amount,
 
-        COALESCE(SUM($earningColumn),0) as my_earnings
-    ")->first();
+    COALESCE(SUM(CASE 
+        WHEN invoice_id IS NULL THEN 1 
+        ELSE 0 
+    END), 0) as pending_invoice_count,
+
+    COALESCE(SUM(CASE 
+        WHEN credit_note IS NOT NULL THEN product_price 
+        ELSE 0 
+    END), 0) as credit_note_amount,
+
+    COALESCE(SUM($earningColumn), 0) as my_earnings
+")->first();
+
 
     /* ================= RESPONSE ================= */
     return response()->json([

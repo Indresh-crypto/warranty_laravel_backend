@@ -45,7 +45,9 @@ public function show($id)
             'eligibility' => 'required|integer',
             'description' => 'nullable|string',
             'benefits'    => 'nullable|numeric',
-            'image'       => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048', // <--
+            'image'       => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'pay_now'   =>   'nullable|integer',
+            'pay_later' =>   'nullable|integer'
         ]);
 
         if ($validator->fails()) {
@@ -82,7 +84,9 @@ public function show($id)
             'eligibility' => 'sometimes|integer',
             'description' => 'nullable|string',
             'benefits'    => 'nullable|numeric',
-            'image'       => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048', // <--
+            'image'       => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
+            'pay_now'   =>   'nullable|integer',
+            'pay_later' =>   'nullable|integer'
         ]);
 
         if ($validator->fails()) {

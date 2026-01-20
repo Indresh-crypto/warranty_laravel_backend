@@ -34,6 +34,8 @@ use App\Http\Controllers\WCustomerAddressController;
 use App\Http\Controllers\WProductCoverageController;
 use App\Http\Controllers\PhonePeController;
 use App\Http\Controllers\RazorpayWebhookController;
+use App\Http\Controllers\WarrantyPaymentFlowController;
+use App\Http\Controllers\AdminPaymentController;
 
     Route::prefix('zoho')->group(function () {
         Route::get('/update-token', [ZohoCustomerController::class, 'updateZohoAccessToken']);
@@ -106,6 +108,8 @@ use App\Http\Controllers\RazorpayWebhookController;
     Route::post('/common/logout', [CommonAuthController::class, 'logout']);
     Route::get('/common/logout-status/{id}', [CommonAuthController::class, 'getLogoutStatus']);
     
+    Route::post('/company/update-fields/{id}', [CommonUpdateController::class, 'updateDynamicFieldsCompany']);
+    Route::get('/company/{companyId}/api-logs', [CommonUpdateController::class, 'getCompanyApiLogs']);
 
     Route::get('/badges', [WBadgeController::class, 'index']);
     Route::get('/badges/{id}', [WBadgeController::class, 'show']);
@@ -245,7 +249,10 @@ use App\Http\Controllers\RazorpayWebhookController;
         
        Route::post('/esign/webhook', [AgreementController::class, 'callback']);
 
-      
+       Route::post('/payment-flow', [WarrantyPaymentFlowController::class, 'processWarrantyPayment']);
+       
+       Route::put('/companies/{id}', [CompanyController::class, 'update']);
+       
     });
 
     Route::prefix('warrantybuilder')->group(function () {
@@ -288,4 +295,22 @@ use App\Http\Controllers\RazorpayWebhookController;
     Route::get('/phonepe/status/{txnId}', [PhonePeController::class, 'checkStatus']);
 
     Route::post('/razorpay/webhook', [RazorpayWebhookController::class, 'handle']);
+    
+    
+    Route::prefix('admin')->group(function () {
+
+        Route::get('/payments', [AdminPaymentController::class, 'index']);
+    
+        Route::get('/payments/stats', [AdminPaymentController::class, 'stats']);
+    
+        Route::get('/payments/{paymentId}', [AdminPaymentController::class, 'show']);
+    
+        Route::get('/payments/{paymentId}/warranty-flow', [AdminPaymentController::class, 'warrantyStatus']);
+    
+        Route::post('/payments/{paymentId}/retry-warranty', [AdminPaymentController::class, 'retryWarranty']);
+        
+        Route::post('/payments/{paymentId}/regenerate-invoice',[AdminPaymentController::class, 'regenerateInvoice']);
+
+    });
+
 

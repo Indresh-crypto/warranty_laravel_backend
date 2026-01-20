@@ -27,7 +27,7 @@ public function store(Request $request)
         'name'        => 'required|string|max:255',
         'phone'       => 'required|string|max:20|unique:w_leads,phone',
         'email'       => 'required|email|unique:w_leads,email',
-        'password'    => 'required|min:6',
+        'password'    => 'nullable',
         'created_by_id' => 'required',
         'created_by_name' => 'required',
         'owner_name'    => 'required',
@@ -59,8 +59,8 @@ public function store(Request $request)
     $districtIn = $pincodeData->district_in;
 
     // Plain password (for email)
-    $plainPassword = $request->password;
-
+  
+    $plainPassword = random_int(100000, 999999);
     // Create lead
     $lead = WLead::create([
         'name'            => $request->name,
@@ -90,6 +90,9 @@ public function store(Request $request)
         'district_in'     => $districtIn,
         'formdata'        => $request->formdata,
         'form_ref'        => $request->form_ref,
+        'pay_now'        =>  $request->pay_now,
+        'pay_later'      =>  $request->pay_later
+        
     ]);
 
     // Generate lead_code
