@@ -33,6 +33,13 @@ color:#0056b3;">
     {{ $password }}
 </div>
 
+**Login Link**
+<div style="background:#eef5ff;border:1px dashed #b3cde0;border-radius:10px;
+padding:15px;text-align:center;margin:15px 0;font-size:12px;font-weight:15px00;
+color:#0056b3;">
+   <a href="https://warrantynew.goelectronix.co.in">Login here</a>
+</div>
+
 > ⚠️ **For security reasons, we strongly recommend changing your password after your first login.**
 
 ---

@@ -76,7 +76,10 @@ class Company extends Model
         'admin_status_change_date',
         'auto_status_change_date',
         'logo',
-        'domain'
+        'domain',
+        'color',
+        'favicon',
+        'title'
     ];
 
     protected $hidden = ['password'];

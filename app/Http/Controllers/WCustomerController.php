@@ -106,6 +106,7 @@ class WCustomerController extends Controller
             }
     
             if ($status === 'uninvoiced') {
+             
                 $query->whereHas('devices', fn($q) => $q->whereNull('invoice_id'));
             }
         }
@@ -350,7 +351,10 @@ class WCustomerController extends Controller
     }
 
     /* ================= EXACT FILTERS ================= */
-    if ($request->filled('retailer_id')) {
+    if ($request->filled('id')) {
+        $query->where('id', $request->id);
+    }
+     if ($request->filled('retailer_id')) {
         $query->where('retailer_id', $request->retailer_id);
     }
 
@@ -382,6 +386,17 @@ class WCustomerController extends Controller
             $query->whereNull('invoice_id');
         }
     }
+
+    if ($request->filled('credit_note')) {
+        
+        $credit_note = strtolower(trim($request->credit_note));
+
+        if ($credit_note === 'credit_note') {
+            $query->whereNotNull('credit_note');
+        }
+
+    }
+
 
     /* ================= DATE RANGE FILTER ================= */
     if ($request->filled('from_invoice_date') || $request->filled('to_invoice_date')) {
@@ -519,58 +534,123 @@ public function payouts(Request $request)
     );
 
     /* ================= PAYOUT COLUMN ================= */
-    // Decide payout column in PHP (NO SQL binding)
     $earningColumn = $request->filled('agent_id')
         ? 'employee_payout'
         : 'retailer_payout';
 
     /* ================= AGGREGATES ================= */
-   $summary = $query->selectRaw("
-    COUNT(*) as warranty_submitted,
+    $summary = $query->selectRaw("
+        COUNT(*) AS warranty_submitted,
 
-    COALESCE(SUM(CASE 
-        WHEN invoice_status != 'paid' THEN product_price 
-        ELSE 0 
-    END), 0) as total_sales,
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_status = 'paid' 
+                THEN product_mrp 
+                ELSE 0 
+            END), 0
+        ) AS total_sales_invoice_paid,
 
-    COALESCE(SUM(CASE 
-        WHEN invoice_status = 'paid' THEN product_price 
-        ELSE 0 
-    END), 0) as payable_amount,
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_status IS NOT NULL 
+                 AND invoice_status != '' 
+                THEN product_mrp
+                ELSE 0
+            END), 0
+        ) AS total_sales_invoiced,
 
-    COALESCE(SUM(CASE 
-        WHEN invoice_id IS NULL THEN product_price 
-        ELSE 0 
-    END), 0) as pending_invoice_amount,
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_status IS NULL 
+                  OR invoice_status = '' 
+                THEN product_mrp
+                ELSE 0
+            END), 0
+        ) AS total_sales_uninvoiced,
 
-    COALESCE(SUM(CASE 
-        WHEN invoice_id IS NULL THEN 1 
-        ELSE 0 
-    END), 0) as pending_invoice_count,
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_status = 'paid' 
+                THEN product_price 
+                ELSE 0 
+            END), 0
+        ) AS payable_amount,
 
-    COALESCE(SUM(CASE 
-        WHEN credit_note IS NOT NULL THEN product_price 
-        ELSE 0 
-    END), 0) as credit_note_amount,
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_id IS NULL 
+                  OR invoice_id = '' 
+                THEN product_price 
+                ELSE 0 
+            END), 0
+        ) AS pending_invoice_amount,
 
-    COALESCE(SUM($earningColumn), 0) as my_earnings
-")->first();
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_id IS NULL 
+                  OR invoice_id = '' 
+                THEN 1 
+                ELSE 0 
+            END), 0
+        ) AS pending_invoice_count,
 
+        COALESCE(
+            SUM(CASE 
+                WHEN credit_note IS NOT NULL 
+                THEN product_price 
+                ELSE 0 
+            END), 0
+        ) AS credit_note_amount,
+        
+        COALESCE(
+            SUM(
+                CASE 
+                    WHEN (is_pay_later IS NULL OR is_pay_later = 0)
+                     AND invoice_id IS NOT NULL
+                     AND invoice_id != ''
+                    THEN product_price
+                    ELSE 0
+                END
+            ), 0
+        ) AS paid_amount,
+
+
+        COALESCE(
+            SUM(
+                CASE 
+                    WHEN credit_note IS NOT NULL 
+                    THEN 1
+                    ELSE 0
+                END
+            ), 0
+        ) AS credit_note_count,
+
+        COALESCE(SUM($earningColumn), 0) AS my_earnings
+    ")->first();
 
     /* ================= RESPONSE ================= */
     return response()->json([
         'status' => true,
         'data' => [
-            'total_sales' => (float) $summary->total_sales,
+            'warranty_submitted'       => (int) $summary->warranty_submitted,
+
+            'total_sales_invoice_paid'=> (float) $summary->total_sales_invoice_paid,
+            'total_sales_invoiced'    => (float) $summary->total_sales_invoiced,
+            'total_sales_uninvoiced'  => (float) $summary->total_sales_uninvoiced,
+
             'pending_invoices' => [
                 'count'  => (int) $summary->pending_invoice_count,
-                'amount'=> (float) $summary->pending_invoice_amount,
+                'amount' => (float) $summary->pending_invoice_amount,
             ],
-            'credit_notes' => (float) $summary->credit_note_amount,
-            'warranty_submitted' => (int) $summary->warranty_submitted,
-            'payable_amount' => (float) $summary->total_sales,
-            'my_earnings' => (float) $summary->my_earnings,
+
+            'credit_notes'   => (float) $summary->credit_note_amount,
+            'payable_amount' => (float) $summary->payable_amount,
+            'my_earnings'    => (float) $summary->my_earnings,
+            'paid_amount'    => (float) $summary->paid_amount,
+            'credit_note_count'    => (float) $summary->credit_note_count
         ]
     ], 200);
 }
+
+
 }

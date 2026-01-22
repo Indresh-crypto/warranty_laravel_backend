@@ -62,6 +62,7 @@ class WarrantyClaimController extends Controller
 
         /* ================= CREATE CLAIM ================= */
         $claim = WarrantyClaim::create([
+            'agent_id'          => $request->agent_id,
             'w_customer_id'     => $request->w_customer_id,
             'w_device_id'       => $request->w_device_id,
             'company_id'        => $device->company_id,
@@ -73,7 +74,7 @@ class WarrantyClaimController extends Controller
                                     ? $request->drop_retailer_id
                                     : null,
             'issue_description' => $request->issue_description,
-            'status'            => 'pending', // ✅ FIRST STATE
+            'status'            => 'pending', 
             'otp'               => null
         ]);
 

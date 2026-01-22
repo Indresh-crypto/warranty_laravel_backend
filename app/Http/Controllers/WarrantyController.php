@@ -10,6 +10,8 @@ use App\Models\Company;
 use App\Models\WarrantyProduct;
 use App\Models\UploadFile;
 use App\Models\CompanyProduct;
+use App\Models\WarrantyClaim;
+
 use App\Models\PriceTemplate;
 use App\Models\WCustomer;
 use App\Models\Companies;
@@ -400,7 +402,8 @@ class WarrantyController extends Controller
                 'agent_id' => $request->agent_id,
                 'created_by' => $request->created_by,
                 'is_approved' => 1,
-                'is_pay_later'=>$request->is_pay_later
+                'is_pay_later'=>$request->is_pay_later,
+                'product_mrp' => $request->product_mrp
             ]);
         
             // ✅ Step 2: Generate WRT code using primary key
@@ -653,9 +656,16 @@ class WarrantyController extends Controller
             'min_value'     => $request->min_value,
             'max_value'     => $request->max_value,
             'status'        => $request->status,
-            'coverage'      => $request->coverage, // optional to keep
-            'exclustions'   => $request->exclustions
+            'coverage'      => $request->coverage, 
+            'exclustions'   => $request->exclustions,
+            'margin'        => $request->margin,
+            'mrp'           => $request->mrp,
+            'product_type'  => $request->product_type
+            
+           
+
         ]);
+
 
         // 2️⃣ Sync categories (existing logic)
         if ($request->has('category_ids')) {
@@ -1155,24 +1165,134 @@ class WarrantyController extends Controller
         'response' => $response->json()
     ]);
 }
-    public function dashboardCounts(Request $request)
-    {
+public function dashboardCounts(Request $request)
+{
+    $companyId = $request->input('company_id');
+    $agentId   = $request->input('agent_id');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Base Query Builders (Reusable)
+    |--------------------------------------------------------------------------
+    */
+    $deviceQuery = WDevice::query();
+    $claimQuery  = WarrantyClaim::query();
+
+    if ($companyId) {
+        $deviceQuery->where('company_id', $companyId);
+        $claimQuery->where('company_id', $companyId);
+    }
+
+    if ($agentId) {
+        $deviceQuery->where('agent_id', $agentId);
+        $claimQuery->where('agent_id', $agentId);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | COMMISSION CALCULATION
+    |--------------------------------------------------------------------------
+    */
+    $approvedCommission = (clone $deviceQuery)
+        ->whereNotNull('invoice_id')
+        ->where('invoice_id', '!=', '')
+        ->sum('company_payout');
+
+    $pendingCommission = (clone $deviceQuery)
+        ->where(function ($q) {
+            $q->whereNull('invoice_id')
+              ->orWhere('invoice_id', '');
+        })
+        ->sum('company_payout');
+
+    /*
+    |--------------------------------------------------------------------------
+    | COMPANY DASHBOARD
+    |--------------------------------------------------------------------------
+    */
+    if (!empty($companyId)) {
+
+        if (!Company::where('id', $companyId)->exists()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid company ID'
+            ], 404);
+        }
+
         return response()->json([
             'status' => true,
+            'type'   => 'company',
             'data' => [
+                // ❌ brand & category usually NOT needed for company
+                // remove if frontend doesn't require
                 'brand_count'     => Brand::count(),
                 'category_count'  => Category::count(),
-                'product_count'   => WarrantyProduct::count(),
-                'company_count'    => Company::where('role', 2)->count(),
-                'agent_count'    => Company::where('role', 4)->count(),
-                'retailer_count'    => Company::where('role', 5)->count(),
-                'price_templates_count' =>0,
-                'connected_retailers_count'=>0,
-                'open_claims_count' =>0,
-                'active_warranties_count' =>0
+
+                'product_count' =>
+                    CompanyProduct::where('company_id', $companyId)->count(),
+
+                'price_templates_count' =>
+                    PriceTemplate::where('company_id', $companyId)->count(),
+
+                'connected_retailers_count' =>
+                    Company::where('company_id', $companyId)
+                           ->where('role', 5)
+                           ->count(),
+
+                'open_claims_count' =>
+                    (clone $claimQuery)
+                        ->where('status', 'pending')
+                        ->count(),
+
+                'active_warranties_count' =>
+                    (clone $deviceQuery)
+                        ->where('status', 'active')
+                        ->count(),
+
+                'approved_commission' => $approvedCommission,
+                'pending_commission'  => $pendingCommission,
             ]
         ], 200);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ADMIN / GLOBAL DASHBOARD
+    |--------------------------------------------------------------------------
+    */
+    return response()->json([
+        'status' => true,
+        'type'   => 'admin',
+        'data' => [
+            'brand_count'     => Brand::count(),
+            'category_count'  => Category::count(),
+            'product_count'   => WarrantyProduct::count(),
+
+            'company_count'   => Company::where('role', 2)->count(),
+            'agent_count'     => Company::where('role', 4)->count(),
+            'retailer_count'  => Company::where('role', 5)->count(),
+
+            'price_templates_count' =>
+                PriceTemplate::count(),
+
+            'connected_retailers_count' =>
+                Company::where('role', 5)->count(),
+
+            'open_claims_count' =>
+                (clone $claimQuery)
+                    ->where('status', 'pending')
+                    ->count(),
+
+            'active_warranties_count' =>
+                (clone $deviceQuery)
+                    ->where('status', 'active')
+                    ->count(),
+
+            'approved_commission' => $approvedCommission,
+            'pending_commission'  => $pendingCommission,
+        ]
+    ], 200);
+}
     
     public function updateProductStatus(Request $request, $id)
     {
@@ -1431,5 +1551,86 @@ class WarrantyController extends Controller
         'skipped'  => $skipped,
         'failed'   => $failed
     ], 201);
+}
+
+public function agentDashboard(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'agent_id' => 'required|integer|exists:companies,id'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    $agentId = $request->agent_id;
+
+    $now = now();
+    $monthStart = now()->startOfMonth();
+    $monthEnd   = now()->endOfMonth();
+
+    /* ================= TOTAL RETAILERS ================= */
+    $totalRetailers = Company::where('agent_id', $agentId)
+        ->where('role', 5)
+        ->count();
+
+    /* ================= SELLING RETAILERS (LAST 7 DAYS) ================= */
+    $sellingRetailers = WDevice::where('agent_id', $agentId)
+        ->where('created_at', '>=', now()->subDays(7))
+        ->distinct('retailer_id')
+        ->count('retailer_id');
+
+    /* ================= THIS MONTH SALES ================= */
+    $thisMonthSales = WDevice::where('agent_id', $agentId)
+        ->whereBetween('created_at', [$monthStart, $monthEnd])
+        ->sum('product_mrp');
+
+    /* ================= THIS MONTH COMMISSION ================= */
+    $thisMonthCommission = WDevice::where('agent_id', $agentId)
+        ->whereBetween('created_at', [$monthStart, $monthEnd])
+        ->sum('other_payout');
+
+    /* ================= LIFETIME COMMISSION ================= */
+    $lifetimeCommission = WDevice::where('agent_id', $agentId)
+        ->sum('other_payout');
+
+    /* ================= AVG SALES / RETAILER (CURRENT MONTH) ================= */
+    $avgSalesPerRetailer = WDevice::where('agent_id', $agentId)
+        ->whereBetween('created_at', [$monthStart, $monthEnd])
+        ->selectRaw('AVG(product_mrp) as avg_sales')
+        ->value('avg_sales');
+
+    /* ================= RESPONSE ================= */
+    return response()->json([
+        'status' => true,
+        'data' => [
+            'onboarded_retailers' => [
+                'total' => $totalRetailers,
+            ],
+
+            'selling_retailers' => [
+                'last_7_days' => $sellingRetailers,
+            ],
+
+            'this_month_sales' => [
+                'amount'   => round($thisMonthSales, 2),
+            ],
+
+            'this_month_commission' => [
+                'amount' => round($thisMonthCommission, 2),
+            ],
+
+            'lifetime_commission' => [
+                'amount' => round($lifetimeCommission, 2),
+            ],
+
+            'avg_sales_per_retailer' => [
+                'amount' => round($avgSalesPerRetailer ?? 0, 2),
+            ]
+        ]
+    ], 200);
 }
 }

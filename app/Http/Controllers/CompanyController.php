@@ -45,6 +45,9 @@ class CompanyController extends Controller
             'pan'           => $request->pan,
             'gst'           => $request->gst,
             'business_type' => $request->business_type,
+            'color'         => $request->color,
+            'favicon'       => $request->favicon,
+            'title'         => $request->title,
             'status' => 1
         ]);
 
@@ -116,80 +119,80 @@ class CompanyController extends Controller
     /**
      * List all companies
      */
- public function list(Request $request)
-{
-    $perPage = $request->per_page ?? 10;
-
-    $companies = Company::query()
-
-        ->when($request->business_name, function ($q) use ($request) {
-            $q->where('business_name', 'like', '%' . $request->business_name . '%');
-        })
-
-        ->when($request->id, function ($q) use ($request) {
-            $q->where('id', $request->id);
-        })
-
-        // STATE (comma separated)
-        ->when($request->state, function ($q) use ($request) {
-            $states = array_map('trim', explode(',', $request->state));
-            $q->whereIn('state', $states);
-        })
-
-        // DISTRICT (comma separated)
-        ->when($request->district, function ($q) use ($request) {
-            $districts = array_map('trim', explode(',', $request->district));
-            $q->whereIn('district', $districts);
-        })
-
-        // PINCODE (comma separated)
-        ->when($request->pincode, function ($q) use ($request) {
-            $pincodes = array_map('trim', explode(',', $request->pincode));
-            $q->whereIn('pincode', $pincodes);
-        })
-
-        ->when($request->city, function ($q) use ($request) {
-            $q->where('city', $request->city);
-        })
-
-        ->when($request->role, function ($q) use ($request) {
-            $q->where('role', $request->role);
-        })
-
-        ->when($request->status, function ($q) use ($request) {
-            $q->where('status', $request->status);
-        })
-        ->when($request->status, function ($q) use ($request) {
-            $q->where('domain', $request->domain);
-        })
-
-        ->when($request->is_verified, function ($q) use ($request) {
-            $q->where('is_verified', $request->is_verified);
-        })
-
-        ->when($request->company_code, function ($q) use ($request) {
-            $q->where('company_code', $request->company_code);
-        })
-
-        ->when($request->user_type, function ($q) use ($request) {
-            $q->where('user_type', $request->user_type);
-        })
-
-        ->orderBy('id', 'desc')
-        ->paginate($perPage);
-
-    return response()->json([
-        'status'  => true,
-        'message' => 'Companies list',
-        'pagination' => [
-            'current_page' => $companies->currentPage(),
-            'per_page'     => $companies->perPage(),
-            'last_page'    => $companies->lastPage(),
-            'total'        => $companies->total(),
-        ],
-        'data' => $companies->items()
-    ]);
-}
+     public function list(Request $request)
+    {
+        $perPage = $request->per_page ?? 10;
+    
+        $companies = Company::query()
+    
+            ->when($request->business_name, function ($q) use ($request) {
+                $q->where('business_name', 'like', '%' . $request->business_name . '%');
+            })
+    
+            ->when($request->id, function ($q) use ($request) {
+                $q->where('id', $request->id);
+            })
+    
+            // STATE (comma separated)
+            ->when($request->state, function ($q) use ($request) {
+                $states = array_map('trim', explode(',', $request->state));
+                $q->whereIn('state', $states);
+            })
+    
+            // DISTRICT (comma separated)
+            ->when($request->district, function ($q) use ($request) {
+                $districts = array_map('trim', explode(',', $request->district));
+                $q->whereIn('district', $districts);
+            })
+    
+            // PINCODE (comma separated)
+            ->when($request->pincode, function ($q) use ($request) {
+                $pincodes = array_map('trim', explode(',', $request->pincode));
+                $q->whereIn('pincode', $pincodes);
+            })
+    
+            ->when($request->city, function ($q) use ($request) {
+                $q->where('city', $request->city);
+            })
+    
+            ->when($request->role, function ($q) use ($request) {
+                $q->where('role', $request->role);
+            })
+    
+            ->when($request->status, function ($q) use ($request) {
+                $q->where('status', $request->status);
+            })
+            ->when($request->domain, function ($q) use ($request) {
+                $q->where('domain', $request->domain);
+            })
+    
+            ->when($request->is_verified, function ($q) use ($request) {
+                $q->where('is_verified', $request->is_verified);
+            })
+    
+            ->when($request->company_code, function ($q) use ($request) {
+                $q->where('company_code', $request->company_code);
+            })
+    
+            ->when($request->user_type, function ($q) use ($request) {
+                $q->where('user_type', $request->user_type);
+            })
+    
+            ->orderBy('id', 'desc')
+            ->paginate($perPage);
+    
+        return response()->json([
+            'status'  => true,
+            'message' => 'Companies list',
+            'pagination' => [
+                'current_page' => $companies->currentPage(),
+                'per_page'     => $companies->perPage(),
+                'last_page'    => $companies->lastPage(),
+                'total'        => $companies->total(),
+            ],
+            'data' => $companies->items()
+        ]);
+    }
     /**
      * Activate / Deactivate Company
      */
@@ -286,7 +289,10 @@ class CompanyController extends Controller
             'pincode'       => 'nullable|digits:6',
             'pan'           => 'nullable|string|max:20',
             'gst'           => 'nullable|string|max:20',
-            'domain'        => 'nullable|url',
+            'domain'        => 'nullable',
+            'color'        => 'nullable',
+            'favicon'      => 'nullable',
+            'title'        => 'nullable',
         ]);
 
         if ($validator->fails()) {

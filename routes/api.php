@@ -223,6 +223,7 @@ use App\Http\Controllers\AdminPaymentController;
         Route::post('claim/delivery-otp-verify', [WarrantyClaimController::class, 'verifyDeliveryOtp']);
         Route::post('claim/upload-photo', [WarrantyClaimController::class, 'uploadPhoto']);
 
+
         Route::prefix('customer/address')->group(function () {
             Route::post('list',   [WCustomerAddressController::class, 'list']);
             Route::post('create', [WCustomerAddressController::class, 'create']);
@@ -253,6 +254,7 @@ use App\Http\Controllers\AdminPaymentController;
        
        Route::put('/companies/{id}', [CompanyController::class, 'update']);
        
+      Route::get('/agent-dashboard', [WarrantyController::class, 'agentDashboard']);
     });
 
     Route::prefix('warrantybuilder')->group(function () {
