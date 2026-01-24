@@ -20,6 +20,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Validator;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
+use App\Models\Variant;
 
 
 class WarrantyDeviceModelController extends Controller
@@ -98,5 +99,25 @@ class WarrantyDeviceModelController extends Controller
         return response()->json([
             'data' => $query->orderBy('name')->paginate(20)
         ]);
+    }
+    
+    public function getVariants(Request $request)
+    {
+        $query = Variant::query();
+
+        // Search by name
+        if ($request->filled('search')) {
+            $query->where('name', 'LIKE', '%' . $request->search . '%');
+        }
+
+        $variants = $query
+            ->orderBy('name')
+            ->get();
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Variants fetched successfully',
+            'data' => $variants
+        ], 200);
     }
 }

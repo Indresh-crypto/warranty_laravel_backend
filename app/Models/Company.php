@@ -79,7 +79,10 @@ class Company extends Model
         'domain',
         'color',
         'favicon',
-        'title'
+        'title',
+        'is_password_changed',
+        'created_by_id',
+        'created_by_name'
     ];
 
     protected $hidden = ['password'];

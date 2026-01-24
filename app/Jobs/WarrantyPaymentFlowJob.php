@@ -323,7 +323,7 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                 */
                 
                 if (!WarrantyFlowLog::where('payment_id', $paymentId)
-                    ->where('step', 'INVOICE_SENT')
+                    ->where('step', 'INVOICE_PAID')
                     ->exists()) {
                 
                     $sendResponse = app(WarrantyPaymentFlowController::class)
@@ -336,16 +336,17 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     // UPDATE DEVICE STATUS
                     // ==========================
                 
-                    $device->update([
-                
-                        'invoice_status' => 'sent',
+                   $device->update([
+                     //   'invoice_status' => $sendResponse['invoice']['status'] ?? 'unknown',
+                        'invoice_status' => 'paid',
+                        'stauts' =>1
                     ]);
                 
                     WarrantyFlowLog::create([
                         'payment_id' => $paymentId,
                         'device_id' => $device->id,
                         'invoice_id' => $device->invoice_id,
-                        'step' => 'INVOICE_SENT',
+                        'step' => 'INVOICE_PAID',
                         'status' => 1,
                         'response_data' => json_encode($sendResponse)
                     ]);
@@ -419,7 +420,8 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     'payment_json' => json_encode($zohoPayment),
             
                     // Invoice now fully paid
-                    'invoice_status' => 'paid'
+                    'invoice_status' => 'paid',
+                    'status' =>1
                 ]);
             
                 WarrantyFlowLog::create([

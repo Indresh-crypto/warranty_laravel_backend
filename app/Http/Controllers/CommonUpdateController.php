@@ -62,7 +62,10 @@ class CommonUpdateController extends Controller
         'owner_email',
         'owner_contact', "password", "gst_json", "bank_json",
         "bank_verified",
-        "gst_verified", "agent_code", "zoho_id", "agent_id", "pay_now", "pay_later", "logo", "domain"
+        "gst_verified", "agent_code", "zoho_id", "agent_id", 
+        "pay_now", "pay_later", "logo", "domain",
+        "created_by_name",
+        "created_by_id"
     ]);
 
     // =========================
@@ -237,6 +240,14 @@ class CommonUpdateController extends Controller
         
          if ($request->filled('senior_id')) {
             $query->where('senior_id', $request->senior_id);
+        }
+        
+        if ($request->filled('created_by_id')) {
+            $query->where('created_by_id', $request->created_by_id);
+        }
+    
+        if ($request->filled('created_by_name')) {
+            $query->where('created_by_name', $request->created_by_name);
         }
     
         // ---------------------------------

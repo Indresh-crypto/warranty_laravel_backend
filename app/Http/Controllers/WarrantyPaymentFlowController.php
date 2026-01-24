@@ -263,28 +263,28 @@ class WarrantyPaymentFlowController extends Controller
     }
     
    public function sendZohoInvoice($company_id, $invoiceId)
-{
-    $company = \App\Models\Company::find($company_id);
-
-    if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
-        throw new \Exception('Zoho org credentials missing');
-    }
-
-    $client = new \GuzzleHttp\Client();
-
-    $response = $client->post(
-        "https://www.zohoapis.in/books/v3/invoices/{$invoiceId}/status/sent",
-        [
-            'headers' => [
-                'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token
-            ],
-            'query' => [
-                'organization_id' => $company->zoho_org_id
+   {
+        $company = \App\Models\Company::find($company_id);
+    
+        if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+            throw new \Exception('Zoho org credentials missing');
+        }
+    
+        $client = new \GuzzleHttp\Client();
+    
+        $response = $client->post(
+            "https://www.zohoapis.in/books/v3/invoices/{$invoiceId}/status/sent",
+            [
+                'headers' => [
+                    'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token
+                ],
+                'query' => [
+                    'organization_id' => $company->zoho_org_id
+                ]
             ]
-        ]
-    );
-
-    return json_decode($response->getBody(), true);
-}
+        );
+    
+        return json_decode($response->getBody(), true);
+    }
 
 }

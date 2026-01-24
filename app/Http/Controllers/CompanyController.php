@@ -263,51 +263,86 @@ class CompanyController extends Controller
             'data'   => $retailers
         ]);
     }
-    public function update(Request $request, $id)
-    {
-        $company = Company::find($id);
+   public function update(Request $request, $id)
+   {
+    $company = Company::find($id);
 
-        if (!$company) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Company not found'
-            ], 404);
-        }
-
-        $data = $request->only($company->getFillable());
-
-        if (empty($data)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'No valid fields provided for update'
-            ], 422);
-        }
-
-        $validator = Validator::make($data, [
-            'contact_email' => 'nullable|email',
-            'contact_phone' => 'nullable|digits_between:8,15',
-            'pincode'       => 'nullable|digits:6',
-            'pan'           => 'nullable|string|max:20',
-            'gst'           => 'nullable|string|max:20',
-            'domain'        => 'nullable',
-            'color'        => 'nullable',
-            'favicon'      => 'nullable',
-            'title'        => 'nullable',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        $company->update($data);
-
+    if (!$company) {
         return response()->json([
-            'status' => true,
-            'message' => 'Company updated successfully',
-            'data' => $company->fresh()
-        ], 200);
+            'status' => false,
+            'message' => 'Company not found'
+        ], 404);
     }
+
+    $validator = Validator::make($request->all(), [
+        'company_name'   => 'sometimes|required|string|max:255',
+        'contact_phone'  => 'sometimes|required|string|unique:companies,contact_phone,' . $company->id,
+        'contact_email'  => 'sometimes|required|email|unique:companies,contact_email,' . $company->id,
+        'password'       => 'sometimes|required|min:6',
+
+        'contact_person' => 'sometimes|nullable|string|max:255',
+        'address_line1'  => 'sometimes|nullable|string',
+        'address_line2'  => 'sometimes|nullable|string',
+        'city'           => 'sometimes|nullable|string',
+        'state'          => 'sometimes|nullable|string',
+        'district'       => 'sometimes|nullable|string',
+        'pincode'        => 'sometimes|nullable|string',
+        'pan'            => 'sometimes|nullable|string',
+        'gst'            => 'sometimes|nullable|string',
+        'business_type'  => 'sometimes|nullable|string',
+        'color'          => 'sometimes|nullable|string',
+        'favicon'        => 'sometimes|nullable|string',
+        'title'          => 'sometimes|nullable|string',
+        'status'         => 'sometimes|in:0,1',
+        'is_password_changed' => 'sometimes|nullable'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Validation error',
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    /**
+     * Update only non-null request values
+     */
+    $data = $request->only([
+        'company_name',
+        'contact_person',
+        'contact_phone',
+        'contact_email',
+        'address_line1',
+        'address_line2',
+        'city',
+        'state',
+        'district',
+        'pincode',
+        'pan',
+        'gst',
+        'business_type',
+        'color',
+        'favicon',
+        'title',
+        'status',
+        'is_password_changed'
+    ]);
+
+    // Remove null values
+    $data = array_filter($data, fn ($value) => !is_null($value));
+
+    // Handle password separately
+    if ($request->filled('password')) {
+        $data['password'] = Hash::make($request->password);
+    }
+
+    $company->update($data);
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Company updated successfully',
+        'data' => $company->fresh()
+    ], 200);
+}
 }

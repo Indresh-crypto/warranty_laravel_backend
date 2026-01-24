@@ -124,7 +124,8 @@ class WarrantyInvoiceController extends Controller
                             $device->update([
                                 'invoice_id'           => $body['invoice']['invoice_id'],
                                 'invoice_created_date' => now(),
-                                'invoice_status'       => $body['invoice']['status'] ?? 'draft',
+                            //    'invoice_status'       => $body['invoice']['status'] ?? 'draft',
+                                'invoice_status'       => 'paid',
                                 'invoice_json'         => json_encode($body['invoice']),
                             ]);
                         }
@@ -418,7 +419,8 @@ class WarrantyInvoiceController extends Controller
                         'company_id'        => $companyId,
                         'invoice_id_parent' => $body['invoice']['invoice_id'],
                         'invoice_no_parent' => $body['invoice']['invoice_number'] ?? null,
-                        'invoice_status'    => $body['invoice']['status'] ?? 'draft',
+                  //      'invoice_status'    => $body['invoice']['status'] ?? 'draft',
+                         'invoice_status'    => 'paid',
                         'total_amount'      => $companyDevices->sum('company_payout'),
                     ];
                 }

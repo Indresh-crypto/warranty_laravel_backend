@@ -98,7 +98,7 @@ registered device and coverage.
 </tr>
 <tr>
 <td style="padding:10px; background:#f9fafb;"><strong>Validity</strong></td>
-<td style="padding:10px;">{{ $device->product->validity }} Months</td>
+<td style="padding:10px;">{{ $device->product->validity }} Days</td>
 </tr>
 <tr>
 <td style="padding:10px; background:#f9fafb;"><strong>Expiry Date</strong></td>

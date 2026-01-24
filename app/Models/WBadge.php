@@ -13,6 +13,8 @@ class WBadge extends Model
         'eligibility',
         'description',
         'benefits',
-        'image'
+        'image',
+        'pay_now',
+        'pay_later'
     ];
 }

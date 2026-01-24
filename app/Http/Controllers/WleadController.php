@@ -181,6 +181,15 @@ public function store(Request $request)
         $baseQuery->where('lead_type', $request->lead_type);
     }
 
+
+    if ($request->manager_id) {
+        $baseQuery->where('manager_id', $request->manager_id);
+    }
+    
+     if ($request->agent_id) {
+        $baseQuery->where('agent_id', $request->agent_id);
+    }
+
     // ---------------------------------
     // STATUS FILTER (single value)
     // ---------------------------------
@@ -549,6 +558,10 @@ public function yearMonthReport(Request $request)
 
     if ($request->company_id) {
         $query->where('company_id', $request->company_id);
+    }
+    
+    if ($request->manager_id) {
+        $query->where('manager_id', $request->manager_id);
     }
 
     if ($request->lead_type) {

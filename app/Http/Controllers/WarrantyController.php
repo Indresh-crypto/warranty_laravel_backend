@@ -11,7 +11,7 @@ use App\Models\WarrantyProduct;
 use App\Models\UploadFile;
 use App\Models\CompanyProduct;
 use App\Models\WarrantyClaim;
-
+use App\Models\CompanyEmployee;
 use App\Models\PriceTemplate;
 use App\Models\WCustomer;
 use App\Models\Companies;
@@ -32,6 +32,8 @@ use App\Models\WarrantyProductCoverage;
 use DB;
 use App\Events\WarrantyRegistered;
 use App\Events\WarrantyRegisterWhatsapp;
+use App\Events\WarrantyRegisteredProvision;
+
 
 class WarrantyController extends Controller
 {
@@ -307,7 +309,8 @@ class WarrantyController extends Controller
                     'zoho_json'        => json_encode($responseBody['invoice']),
                     'created_by_id'    => $customer->retailer_id,
                     'created_by_name'  => $customer->name,
-                    'invoice_status'   => $responseBody['invoice']['status'] ?? 'sent',
+                  //  'invoice_status'   => $responseBody['invoice']['status'] ?? 'sent',
+                    'invoice_status'   => 'paid',
                     'due_date'         => now()->addDays(7)->toDateString(),
                     'payment_terms_label' => "You need to clear the invoice within 7 days.",
                     'payment_date'     => null,
@@ -420,7 +423,9 @@ class WarrantyController extends Controller
                 'product.coverages'
             ]);
             
-           event(new WarrantyRegistered($device));
+
+           
+           event(new WarrantyRegisteredProvision($device));
            
             return response()->json([
                 'message' => 'Device created successfully',
@@ -1223,8 +1228,6 @@ public function dashboardCounts(Request $request)
             'status' => true,
             'type'   => 'company',
             'data' => [
-                // ❌ brand & category usually NOT needed for company
-                // remove if frontend doesn't require
                 'brand_count'     => Brand::count(),
                 'category_count'  => Category::count(),
 
@@ -1234,10 +1237,9 @@ public function dashboardCounts(Request $request)
                 'price_templates_count' =>
                     PriceTemplate::where('company_id', $companyId)->count(),
 
-                'connected_retailers_count' =>
-                    Company::where('company_id', $companyId)
-                           ->where('role', 5)
-                           ->count(),
+                'connected_retailers_count' => WDevice::where('company_id', $companyId)
+                    ->where('created_at', '>=', Carbon::now()->subDays(7))
+                    ->count(),
 
                 'open_claims_count' =>
                     (clone $claimQuery)
@@ -1246,9 +1248,11 @@ public function dashboardCounts(Request $request)
 
                 'active_warranties_count' =>
                     (clone $deviceQuery)
-                        ->where('status', 'active')
+                        ->where('is_approved',1)
                         ->count(),
-
+                'agent_count'     => Company::where('role', 4)->where('company_id', $companyId)->count(),
+                'company_employee_count'     => CompanyEmployee::where('company_id', $companyId)->count(),
+                'retailer_count'  => Company::where('role', 5)->count(),
                 'approved_commission' => $approvedCommission,
                 'pending_commission'  => $pendingCommission,
             ]

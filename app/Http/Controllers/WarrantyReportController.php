@@ -69,7 +69,7 @@ class WarrantyReportController extends Controller
         COUNT(*) AS total_sold,
 
         COALESCE(
-            SUM(product_mrp),
+            SUM(product_price),
         0) AS total_revenue,
 
         COALESCE(
@@ -160,7 +160,7 @@ class WarrantyReportController extends Controller
         $data = $query
             ->selectRaw("
                 DATE(w_devices.created_at) as date,
-                COALESCE(SUM(w_devices.product_mrp), 0) as revenue
+                COALESCE(SUM(w_devices.product_price), 0) as revenue
             ")
             ->groupBy('date')
             ->orderBy('date')
@@ -218,7 +218,7 @@ class WarrantyReportController extends Controller
     $data = $query
         ->selectRaw("
             w_devices.product_name,
-            COALESCE(SUM(w_devices.product_mrp), 0) as revenue
+            COALESCE(SUM(w_devices.product_price), 0) as revenue
         ")
         ->groupBy('w_devices.product_name')
         ->orderByDesc('revenue')
@@ -279,7 +279,7 @@ public function geographyRevenue(Request $request)
         $data = $query
             ->selectRaw("
                 UPPER(w_customers.state) as label,
-                COALESCE(SUM(w_devices.product_mrp), 0) as revenue
+                COALESCE(SUM(w_devices.product_price), 0) as revenue
             ")
             ->groupBy('w_customers.state')
             ->orderByDesc('revenue')
@@ -290,30 +290,32 @@ public function geographyRevenue(Request $request)
         $query->when($request->state, fn ($q) =>
             $q->where('w_customers.state', $request->state)
         );
-
-        $data = $query
-            ->selectRaw("
-                UPPER(w_customers.city) as label,
-                COALESCE(SUM(w_devices.product_mrp), 0) as revenue
-            ")
-            ->groupBy('w_customers.city')
-            ->orderByDesc('revenue')
-            ->get();
+            
+            $data = $query
+                ->selectRaw("
+                    UPPER(w_customers.city) as label,
+                    UPPER(w_customers.state) as state,
+                    COALESCE(SUM(w_devices.product_price), 0) as revenue
+                ")
+                ->groupBy('w_customers.city', 'w_customers.state')
+                ->orderByDesc('revenue')
+                ->get();
     }
 
-    /* ================= RESPONSE FORMAT ================= */
-    return response()->json([
-        'status' => true,
-        'type' => $request->type,
-        'chart' => [
-            'labels' => $data->pluck('label'),
-            'values' => $data->pluck('revenue'),
-        ],
-        'tiles' => $data->map(fn ($row) => [
-            'name' => $row->label,
-            'revenue' => (float) $row->revenue
-        ]),
-        'top' => $data->first(),
-    ]);
-}
+                /* ================= RESPONSE FORMAT ================= */
+             return response()->json([
+                'status' => true,
+                'type'   => $request->type,
+                'chart'  => [
+                    'labels' => $data->pluck('label'),
+                    'values' => $data->pluck('revenue'),
+                ],
+                'tiles' => $data->map(fn ($row) => [
+                    'name'    => $row->label,
+                    'state'   => $row->state,
+                    'revenue' => (float) $row->revenue
+                ]),
+                'top' => $data->first(),
+            ]);
+            }
 }

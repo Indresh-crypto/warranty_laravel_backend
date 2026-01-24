@@ -37,6 +37,7 @@ use App\Http\Controllers\RazorpayWebhookController;
 use App\Http\Controllers\WarrantyPaymentFlowController;
 use App\Http\Controllers\AdminPaymentController;
 use App\Http\Controllers\WarrantyReportController;
+use App\Http\Controllers\CommissionController;
 
     Route::prefix('zoho')->group(function () {
         Route::get('/update-token', [ZohoCustomerController::class, 'updateZohoAccessToken']);
@@ -155,6 +156,7 @@ use App\Http\Controllers\WarrantyReportController;
 
         Route::get('/device-models', [WarrantyDeviceModelController::class, 'searchDeviceModels']);
 
+        Route::get('/variants', [WarrantyDeviceModelController::class, 'getVariants']);
 
         Route::post('/create-product', [WarrantyController::class, 'createProduct']);
         Route::post('/update-product/{id}', [WarrantyController::class, 'updateProduct']);
@@ -266,6 +268,7 @@ use App\Http\Controllers\WarrantyReportController;
       
     Route::get('/charts/geography-revenue', [WarrantyReportController::class, 'geographyRevenue']);
 
+    Route::get('commission-dashboard', [CommissionController::class, 'dashboard']);
 
     });
 
