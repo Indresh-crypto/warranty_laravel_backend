@@ -15,6 +15,7 @@ use Illuminate\Support\Str;
 use Carbon\Carbon;
 use App\Events\CustomerRegistered;
 
+
 class WCustomerController extends Controller
 {
     public function checkCustomerByMobile(Request $request)
@@ -246,31 +247,40 @@ class WCustomerController extends Controller
     }
 
     
-   public function updateWarrantyStatus(Request $request, $id)
-   {
-    $validator = Validator::make($request->all(), [
-        'status'        => 'required|integer|max:50',
-        'reject_remark' => 'nullable|string|max:500',
-        'notes'      =>'required'
-    ]);
-
-    if ($validator->fails()) {
+    public function updateWarrantyStatus(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'is_approved'   => 'required|integer',
+            'reject_remark' => 'nullable|string|max:500',
+            'note'          => 'required|string',
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        $device = WDevice::findOrFail($id);
+    
+        $data = $validator->validated();
+    
+        // ✅ Auto set reject_date only when rejected
+        if ($data['is_approved'] == 2) {
+            $data['reject_date'] = Carbon::now(); // current datetime
+        } else {
+            $data['reject_date'] = null; // optional: reset if approved again
+        }
+    
+        $device->update($data);
+    
         return response()->json([
-            'success' => false,
-            'errors'  => $validator->errors()
-        ], 422);
+            'success' => true,
+            'message' => 'Warranty updated successfully',
+            'data'    => $device
+        ], 200);
     }
-
-    $device = WDevice::findOrFail($id);
-
-    $device->update($validator->validated());
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Warranty updated successfully',
-        'data'    => $device
-    ], 200);
-}
     
     public function deviceAnalytics(Request $request)
     {
@@ -360,6 +370,11 @@ class WCustomerController extends Controller
 
     if ($request->filled('agent_id')) {
         $query->where('agent_id', $request->agent_id);
+    }
+    
+    
+    if ($request->filled('is_approved')) {
+        $query->where('is_approved', $request->is_approved);
     }
 
     if ($request->filled('created_by')) {
@@ -570,14 +585,15 @@ public function payouts(Request $request)
         END), 0
     ) AS total_sales_uninvoiced,
 
-    COALESCE(
+ COALESCE(
         SUM(CASE 
-            WHEN invoice_status != 'paid'
-            THEN product_price 
-            ELSE 0 
+            WHEN invoice_status IS NULL 
+              OR invoice_status = '' 
+            THEN product_price
+            ELSE 0
         END), 0
     ) AS payable_amount,
-
+   
     COALESCE(
         SUM(CASE 
             WHEN invoice_id IS NULL 

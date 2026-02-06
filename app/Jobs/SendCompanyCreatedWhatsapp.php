@@ -41,12 +41,14 @@ class SendCompanyCreatedWhatsapp implements ShouldQueue
             'destination' => $destination,
             'src.name'    => 'GoelectronixWarranty',
             'template'    => json_encode([
-                'id' => 'c7683016-ffb6-4ccf-9aee-0c729afd1348',
+               // 'id' => 'c7683016-ffb6-4ccf-9aee-0c729afd1348',
+                'id' => 'c94ca922-937d-4a7d-badc-ac967cf70f46',
                 'params' => [
                     $company->business_name ?? 'Retailer',
                     'Pending verification',
                     'Support Team',
-                    '90-000-000'
+                    '90-000-000',
+                    'https://warrantynew.goelectronix.co.in' //login here
                 ]
             ])
         ]);

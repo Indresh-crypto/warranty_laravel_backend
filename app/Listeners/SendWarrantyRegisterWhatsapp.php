@@ -72,6 +72,7 @@ class SendWarrantyRegisterWhatsapp implements ShouldQueue
 
                     'template' => json_encode([
                         'id' => '7daef5bb-b87c-41e8-a646-b179277da272',
+                        //809ebf06-80f4-4b7f-a7b3-3ace76fdbd94 for rr
                         'params' => [
                             $customer->name,
                             $device->brand_name,

@@ -26,7 +26,8 @@ class WarrantyClaim extends Model
         'payment_status',
         'inspection_remark',
         'claim_code',
-        'agent_id'
+        'agent_id',
+        'retailer_id'
     ];
 
     public function photos()

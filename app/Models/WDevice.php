@@ -41,6 +41,7 @@ class WDevice extends Model
         'certificate_link',
         'template_id',
         'status_remark',
+        'status',
         'link1',
         'link2',
         'product_price',
@@ -64,7 +65,13 @@ class WDevice extends Model
         'invoice_json',
         'is_pay_later',
         'payment_json',
-        'payment_id'
+        'payment_id',
+        'payment_status',
+        'zoho_invoice_id',
+        'zoho_payment_id',
+        'razorpay_payment_id',
+        'paid_at',
+        'model_id'
         
     ];
 

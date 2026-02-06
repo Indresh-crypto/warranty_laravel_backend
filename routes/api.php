@@ -38,6 +38,9 @@ use App\Http\Controllers\WarrantyPaymentFlowController;
 use App\Http\Controllers\AdminPaymentController;
 use App\Http\Controllers\WarrantyReportController;
 use App\Http\Controllers\CommissionController;
+use App\Http\Controllers\EarningController;
+use App\Http\Controllers\RetailerConnectionController;
+
 
     Route::prefix('zoho')->group(function () {
         Route::get('/update-token', [ZohoCustomerController::class, 'updateZohoAccessToken']);
@@ -84,6 +87,14 @@ use App\Http\Controllers\CommissionController;
          
          Route::post('/employee/reset-password', [CompanyEmployeeController::class, 'resetEmployeePassword']);
          Route::post('/employee/set-password', [CompanyEmployeeController::class, 'setEmployeePassword']);
+         
+         Route::get('/employee-dashboard', [CompanyEmployeeController::class, 'employeeDashboard']);
+         
+        Route::get('/employee-sales-chart', [CompanyEmployeeController::class, 'salesBarChart']);
+
+
+         Route::get('/employee-retailer-line-chart', [CompanyEmployeeController::class, 'retailerStatusSnapshot']);
+
     });
     
     
@@ -227,6 +238,14 @@ use App\Http\Controllers\CommissionController;
         Route::post('claim/upload-photo', [WarrantyClaimController::class, 'uploadPhoto']);
 
 
+        Route::get('/earning-dashbard', [EarningController::class, 'index']);
+     //   Route::get('/agent-earning', [EarningController::class, 'Agentdashboard']);
+     
+     
+        Route::post('company/password/forgot', [CompanyController::class, 'sendResetLink']);
+        Route::post('company/password/reset', [CompanyController::class, 'resetPassword']);
+
+
         Route::prefix('customer/address')->group(function () {
             Route::post('list',   [WCustomerAddressController::class, 'list']);
             Route::post('create', [WCustomerAddressController::class, 'create']);
@@ -269,6 +288,16 @@ use App\Http\Controllers\CommissionController;
     Route::get('/charts/geography-revenue', [WarrantyReportController::class, 'geographyRevenue']);
 
     Route::get('commission-dashboard', [CommissionController::class, 'dashboard']);
+    
+    Route::post('retailer-connection', [RetailerConnectionController::class, 'store']);
+    Route::get('retailer-connection', [RetailerConnectionController::class, 'index']);
+    
+    
+    Route::get('assigned-retailers', [CompanyEmployeeController::class, 'assignedRetailers']);
+    Route::get('connected-retailers', [CompanyEmployeeController::class, 'connectedRetailers']);
+    Route::get('using-retailers', [CompanyEmployeeController::class, 'usingProductRetailers']);
+
+    Route::get('/company-map-dashboard', [CompanyController::class, 'dashboardCounts']);
 
     });
 
@@ -329,5 +358,16 @@ use App\Http\Controllers\CommissionController;
         Route::post('/payments/{paymentId}/regenerate-invoice',[AdminPaymentController::class, 'regenerateInvoice']);
 
     });
+
+
+
+Route::get('/test-mail', function () {
+    \Mail::raw('Mail test OK', function ($msg) {
+        $msg->to('indresh@goelectronix.com')
+            ->subject('Mail Test');
+    });
+
+    return 'Mail sent';
+});
 
 

@@ -286,5 +286,204 @@ class WarrantyPaymentFlowController extends Controller
     
         return json_decode($response->getBody(), true);
     }
+    
+    public function updateExistingWarrantyPayment(Request $request)
+{
+    // ==========================
+    // VALIDATION
+    // ==========================
+
+    $request->validate([
+        'payment_id'   => 'required',
+        'device_id'    => 'required|exists:w_devices,id',
+        'amount'       => 'required|numeric|min:1',
+        'company_id'   => 'required',
+        'retailer_id'  => 'required'
+    ]);
+
+    DB::beginTransaction();
+
+    try {
+
+        // ==========================
+        // STEP 1: FETCH DEVICE
+        // ==========================
+
+        $device = WDevice::lockForUpdate()->find($request->device_id);
+
+        if (!$device) {
+            throw new \Exception('Device not found');
+        }
+
+        // Prevent duplicate payment
+        if ($device->payment_status == 1) {
+            return response()->json([
+                'status' => true,
+                'message' => 'Payment already completed'
+            ]);
+        }
+
+        // ==========================
+        // STEP 2: LOG REQUEST
+        // ==========================
+
+        WarrantyFlowLog::create([
+            'payment_id' => $request->payment_id,
+            'device_id' => $device->id,
+            'step' => 'UPDATE_PAYMENT_CALLBACK',
+            'status' => 1,
+            'request_data' => json_encode($request->all())
+        ]);
+
+        // ==========================
+        // STEP 3: CREATE / UPDATE ZOHO INVOICE
+        // ==========================
+
+        $invoiceResponse = $this->createWarrantyInvoice(
+            $device,
+            $request->company_id,
+            $request->retailer_id,
+            $device->product_id,
+            $request->payment_id,
+            $request->amount
+        );
+
+        if (!$invoiceResponse['success']) {
+            throw new \Exception($invoiceResponse['message']);
+        }
+
+        $invoiceId = $invoiceResponse['invoice']['invoice_id'];
+
+        WarrantyFlowLog::create([
+            'payment_id' => $request->payment_id,
+            'device_id' => $device->id,
+            'invoice_id' => $invoiceId,
+            'step' => 'UPDATE_INVOICE_CREATED',
+            'status' => 1,
+            'response_data' => json_encode($invoiceResponse)
+        ]);
+
+        // ==========================
+        // STEP 4: CAPTURE RAZORPAY
+        // ==========================
+
+        $razorClient = new \GuzzleHttp\Client();
+
+        $razorResponse = $razorClient->post(
+            "https://api.razorpay.com/v1/payments/{$request->payment_id}/capture",
+            [
+                'auth' => [
+                    config('services.razorpay.razorpay_key'),
+                    config('services.razorpay.razorpay_secret'),
+                ],
+                'json' => [
+                    'amount' => $request->amount * 100,
+                    'currency' => 'INR'
+                ]
+            ]
+        );
+
+        $razorBody = json_decode($razorResponse->getBody(), true);
+
+        WarrantyFlowLog::create([
+            'payment_id' => $request->payment_id,
+            'step' => 'UPDATE_RAZORPAY_CAPTURED',
+            'status' => 1,
+            'response_data' => json_encode($razorBody)
+        ]);
+
+        // ==========================
+        // STEP 5: CREATE ZOHO PAYMENT
+        // ==========================
+
+        $zohoPayment = $this->createZohoPayment(
+            $request->company_id,
+            $request->retailer_id,
+            $request->payment_id,
+            $request->amount,
+            $invoiceId
+        );
+
+        WarrantyFlowLog::create([
+            'payment_id' => $request->payment_id,
+            'invoice_id' => $invoiceId,
+            'zoho_payment_id' => $zohoPayment['payment']['payment_id'] ?? null,
+            'step' => 'UPDATE_ZOHO_PAYMENT_CREATED',
+            'status' => 1,
+            'response_data' => json_encode($zohoPayment)
+        ]);
+
+        // ==========================
+        // STEP 6: UPDATE DEVICE RECORD
+        // ==========================
+
+        $device->update([
+            'payment_status' => 1,
+            'zoho_invoice_id' => $invoiceId,
+            'zoho_payment_id' => $zohoPayment['payment']['payment_id'] ?? null,
+            'razorpay_payment_id' => $request->payment_id,
+            'paid_at' => now()
+        ]);
+
+        DB::commit();
+
+        // ==========================
+        // STEP 7: EVENT
+        // ==========================
+
+        event(new PaymentSuccessful($device));
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Warranty payment updated successfully'
+        ]);
+
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        WarrantyFlowLog::create([
+            'payment_id' => $request->payment_id,
+            'device_id' => $request->device_id,
+            'step' => 'UPDATE_PAYMENT_FAILED',
+            'status' => 0,
+            'error_message' => $e->getMessage()
+        ]);
+
+        return response()->json([
+            'status' => false,
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function updateZohoInvoice($company_id, $invoiceId, $lineItems)
+{
+    $company = Company::find($company_id);
+
+    if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+        throw new \Exception('Zoho credentials missing');
+    }
+
+    $client = new \GuzzleHttp\Client();
+
+    $response = $client->put(
+        "https://www.zohoapis.in/books/v3/invoices/{$invoiceId}",
+        [
+            'headers' => [
+                'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                'Content-Type'  => 'application/json'
+            ],
+            'query' => [
+                'organization_id' => $company->zoho_org_id
+            ],
+            'json' => [
+                'line_items' => $lineItems
+            ]
+        ]
+    );
+
+    return json_decode($response->getBody(), true);
+}
 
 }

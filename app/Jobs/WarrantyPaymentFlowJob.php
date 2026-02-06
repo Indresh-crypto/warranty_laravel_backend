@@ -215,6 +215,10 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                 $devicePrice
             );
 
+        \Log::info('Prouct MRP', [
+                'payment_mrp' => $pricing['product_mrp'],
+             
+            ]);
             /*
             |--------------------------------------------------------------------------
             | APPLY ALL FINAL VALUES
@@ -242,11 +246,11 @@ class WarrantyPaymentFlowJob implements ShouldQueue
 
                 // Pricing
                 'product_price' => $pricing['product_price'],
-                'product_mrp'   => $product->mrp,
+                'product_mrp'   =>$pricing['product_mrp'],
 
                 // Warranty config
                 'available_claim' => $product->claims,
-                'expiry_date' => now()->addMonths($product->validity),
+                'expiry_date' => now()->addDays($product->validity),
 
                 // Payouts
                 'retailer_payout' => $pricing['retailer_payout'],
@@ -339,7 +343,7 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                    $device->update([
                      //   'invoice_status' => $sendResponse['invoice']['status'] ?? 'unknown',
                         'invoice_status' => 'paid',
-                        'stauts' =>1
+                        'status' =>1
                     ]);
                 
                     WarrantyFlowLog::create([
@@ -412,18 +416,29 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                 // ==========================
                 // UPDATE DEVICE PAYMENT DATA
                 // ==========================
-            
+                              
                 $device->update([
-            
-                    'payment_id' => $zohoPayment['payment_id'],
-            
-                    'payment_json' => json_encode($zohoPayment),
-            
-                    // Invoice now fully paid
-                    'invoice_status' => 'paid',
-                    'status' =>1
+                
+                    // Zoho
+                    'zoho_payment_id'      => $zohoPayment['payment_id'],
+                    'payment_json'         => json_encode($zohoPayment),
+                
+                    // Razorpay
+                    'razorpay_payment_id'  => $paymentId,
+                
+                    // Generic payment tracking
+                    'payment_id'           => $paymentId,
+                    'payment_status'       => 1,
+                
+                    // Invoice
+                    'invoice_status'       => 'paid',
+                
+                    // Meta
+                    'paid_at'              => now(),
+                    'status'               => 1
                 ]);
-            
+
+                /*
                 WarrantyFlowLog::create([
                     'payment_id' => $paymentId,
                     'invoice_id' => $invoiceId,
@@ -432,6 +447,16 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     'status' => 1,
                     'response_data' => json_encode($zohoResponse)
                 ]);
+                */
+                    WarrantyFlowLog::create([
+                        'payment_id'        => $paymentId,
+                        'device_id'         => $device->id,
+                        'invoice_id'        => $invoiceId,
+                        'zoho_payment_id'   => $zohoPayment['payment_id'],
+                        'step'              => 'ZOHO_PAYMENT_CREATED',
+                        'status'            => 1,
+                        'response_data'     => json_encode($zohoResponse)
+                    ]);
             }
 
             DB::commit();

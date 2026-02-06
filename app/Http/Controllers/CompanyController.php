@@ -3,9 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Company;
+use App\Models\CompanyEmployee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
+
+use Illuminate\Support\Facades\Password;
 
 class CompanyController extends Controller
 {
@@ -344,5 +347,109 @@ class CompanyController extends Controller
         'message' => 'Company updated successfully',
         'data' => $company->fresh()
     ], 200);
+}
+
+public function sendResetLink(Request $request)
+{
+    $request->validate([
+        'email' => 'required|email|exists:companies,contact_email'
+    ]);
+
+    $status = Password::broker('companies')->sendResetLink([
+        'contact_email' => $request->email   // ✅ MUST MATCH COLUMN
+    ]);
+
+    return response()->json([
+        'success' => $status === Password::RESET_LINK_SENT,
+        'message' => __($status)
+    ]);
+}
+    // 🔑 Reset password
+  public function resetPassword(Request $request)
+{
+    $request->validate([
+        'contact_email' => 'required|email|exists:companies,contact_email',
+        'token'         => 'required',
+        'password'      => 'required|min:8|confirmed',
+    ]);
+
+    $status = Password::broker('companies')->reset(
+        $request->only('contact_email', 'password', 'password_confirmation', 'token'),
+        function ($company, $password) {
+            $company->password = Hash::make($password);
+            $company->is_password_changed = 1;
+            $company->save();
+        }
+    );
+
+    return response()->json([
+        'success' => $status === Password::PASSWORD_RESET,
+        'message' => __($status)
+    ]);
+}
+
+public function dashboardCounts(Request $request)
+{
+    $companyId = $request->get('company_id');
+
+    /* ----------------------------
+     | VALIDATE COMPANY (OPTIONAL)
+     -----------------------------*/
+    if ($companyId && !Company::where('id', $companyId)->exists()) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Company not found'
+        ], 404);
+    }
+
+    /* ----------------------------
+     | SHOPS / STATES / DISTRICTS
+     | role = 5 (Retailer / Shop)
+     -----------------------------*/
+    $shopQuery = Company::where('role', 5);
+
+    $totalShops = (clone $shopQuery)->count('id');
+
+    $stateCount = (clone $shopQuery)
+        ->whereNotNull('state')
+        ->distinct('state')
+        ->count('state');
+
+    $districtCount = (clone $shopQuery)
+        ->whereNotNull('district')
+        ->distinct('district')
+        ->count('district');
+
+    /* ----------------------------
+     | EMPLOYEE COUNTS
+     -----------------------------*/
+    $employeeCounts = CompanyEmployee::query()
+        ->when($companyId, function ($q) use ($companyId) {
+            $q->where('company_id', $companyId);
+        })
+        ->selectRaw("
+            COUNT(*) as total_employees,
+            COUNT(CASE WHEN type_of_user = 'Sales' THEN 1 END) as sales_count,
+            COUNT(CASE WHEN type_of_user = 'Operation' THEN 1 END) as operation_count
+        ")
+        ->first();
+
+    /* ----------------------------
+     | FINAL RESPONSE
+     -----------------------------*/
+    return response()->json([
+        'status' => true,
+        'data' => [
+            'total_shops'     => (int) $totalShops,
+            'states'          => (int) $stateCount,
+            'districts'       => (int) $districtCount,
+
+            'employees' => [
+                'total'      => (int) $employeeCounts->total_employees,
+                'sales'      => (int) $employeeCounts->sales_count,
+                'operation'  => (int) $employeeCounts->operation_count,
+            ]
+        ]
+    ]);
 }
 }

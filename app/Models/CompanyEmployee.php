@@ -80,4 +80,9 @@ class CompanyEmployee extends Model
             $this->last_name
         );
     }
+    
+     public function retailerConnections()
+    {
+        return $this->hasMany(RetailerConnection::class, 'created_by_id');
+    }
 }

@@ -1,11 +1,20 @@
 <?php
-
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Notifications\Notifiable;
+use Illuminate\Contracts\Auth\CanResetPassword;
+use Illuminate\Auth\Passwords\CanResetPassword as ResetPasswordTrait;
+use Illuminate\Auth\Notifications\ResetPassword;
 
-class Company extends Model
+
+class Company extends Model implements CanResetPassword
 {
+
+ use Notifiable, ResetPasswordTrait;
+ 
+    protected $hidden = ['password'];
+
     protected $table = 'companies';
 
     protected $fillable = [
@@ -85,11 +94,32 @@ class Company extends Model
         'created_by_name'
     ];
 
-    protected $hidden = ['password'];
-    
+
     public function leads()
     {
         return $this->hasMany(WLead::class, 'email', 'contact_email');
     }
+    
+      public function getEmailForPasswordReset()
+    {
+        return $this->contact_email;
+    }
 
+
+    public function routeNotificationForMail()
+    {
+        return $this->contact_email;
+    }
+
+    // ✅ Explicitly send reset notification
+    public function sendPasswordResetNotification($token)
+    {
+        $this->notify(new ResetPassword($token));
+    }
+    
+    
+    public function retailerConnections()
+    {
+        return $this->hasMany(RetailerConnection::class, 'retailer_id');
+    }
 }

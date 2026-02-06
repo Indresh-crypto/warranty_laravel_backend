@@ -404,9 +404,11 @@ class WarrantyController extends Controller
                 'product_mrp' => $request->product_mrp,
                 'agent_id' => $request->agent_id,
                 'created_by' => $request->created_by,
-                'is_approved' => 1,
+                'is_approved' => 0,
+                'status'=>0,
                 'is_pay_later'=>$request->is_pay_later,
-                'product_mrp' => $request->product_mrp
+                'product_mrp' => $request->product_mrp,
+                'model_id' => $request->model_id
             ]);
         
             // ✅ Step 2: Generate WRT code using primary key
@@ -1237,9 +1239,21 @@ public function dashboardCounts(Request $request)
                 'price_templates_count' =>
                     PriceTemplate::where('company_id', $companyId)->count(),
 
-                'connected_retailers_count' => WDevice::where('company_id', $companyId)
+                
+                'connected_retailers_count' => Company::query()
+                ->where('role', 5)
+                ->where('company_id', $companyId)
+                ->whereNotNull('last_connected_date')
+                ->where('last_connected_date', '>=', Carbon::now()->subDays(7))
+                ->count(),
+    
+                
+                 'active_retailers_count' => WDevice::where('company_id', $companyId)
                     ->where('created_at', '>=', Carbon::now()->subDays(7))
-                    ->count(),
+                    ->distinct('retailer_id')
+                    ->count('retailer_id'),
+                    
+                    
 
                 'open_claims_count' =>
                     (clone $claimQuery)
@@ -1250,9 +1264,13 @@ public function dashboardCounts(Request $request)
                     (clone $deviceQuery)
                         ->where('is_approved',1)
                         ->count(),
+                        
+                'total_warranties_count' =>
+                    (clone $deviceQuery)
+                        ->count(),
                 'agent_count'     => Company::where('role', 4)->where('company_id', $companyId)->count(),
                 'company_employee_count'     => CompanyEmployee::where('company_id', $companyId)->count(),
-                'retailer_count'  => Company::where('role', 5)->count(),
+                'retailer_count'  => Company::where('role', 5)->where('company_id', $companyId)->count(),
                 'approved_commission' => $approvedCommission,
                 'pending_commission'  => $pendingCommission,
             ]

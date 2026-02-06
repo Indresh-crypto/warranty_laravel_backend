@@ -60,7 +60,7 @@ class CommonUpdateController extends Controller
         'owner_middle_name',
         'owner_last_name',
         'owner_email',
-        'owner_contact', "password", "gst_json", "bank_json",
+        'owner_contact', "gst_json", "bank_json",
         "bank_verified",
         "gst_verified", "agent_code", "zoho_id", "agent_id", 
         "pay_now", "pay_later", "logo", "domain",
@@ -143,6 +143,9 @@ class CommonUpdateController extends Controller
     $data['is_verified'] = $request->is_verified ?? 0;
     $data['senior_id'] =   $request->senior_id ?? 0;
     $data['agent_code'] =  $request->agent_code ?? 0;
+
+    $data['created_by_id'] =    $leaddata['created_by_id'] ?? 0;
+    $data['created_by_name'] =  $leaddata['created_by_name'] ?? '';
 
     // Create company
     $user = Company::create($data);

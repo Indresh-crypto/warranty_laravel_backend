@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use App\Models\WarrantyProductCoverage;
 use App\Models\WarrantyClaimCoverage;
 use App\Models\ClaimReason;
+use App\Models\WCustomer;
 
 class WarrantyClaimController extends Controller
 {
@@ -59,23 +60,26 @@ class WarrantyClaimController extends Controller
     DB::beginTransaction();
 
     try {
+    
+        
+        $customer = WCustomer::find($request->w_customer_id);
 
-        /* ================= CREATE CLAIM ================= */
+        if (!$customer) {
+            return response()->json(['message' => 'Customer not found'], 404);
+        }
+        
         $claim = WarrantyClaim::create([
             'agent_id'          => $request->agent_id,
             'w_customer_id'     => $request->w_customer_id,
             'w_device_id'       => $request->w_device_id,
             'company_id'        => $device->company_id,
             'claim_type'        => $request->claim_type,
-            'pickup_address_id' => $request->claim_type === 'pickup'
-                                    ? $request->pickup_address_id
-                                    : null,
-            'drop_retailer_id'  => $request->claim_type === 'drop'
-                                    ? $request->drop_retailer_id
-                                    : null,
+            'pickup_address_id' => $request->claim_type === 'pickup' ? $request->pickup_address_id : null,
+            'drop_retailer_id'  => $request->claim_type === 'drop' ? $request->drop_retailer_id : null,
             'issue_description' => $request->issue_description,
-            'status'            => 'pending', 
-            'otp'               => null
+            'status'            => 'pending',
+            'otp'               => null,
+            'retailer_id'       => $customer->retailer_id
         ]);
 
         /* ================= CLAIM CODE ================= */
@@ -532,8 +536,12 @@ public function list(Request $request)
         $query->where('company_id', $request->company_id);
     }
 
-    if ($request->filled('retailer_id')) {
-        $query->where('drop_retailer_id', $request->retailer_id);
+    if ($request->filled('drop_retailer_id')) {
+        $query->where('drop_retailer_id', $request->drop_retailer_id);
+    }
+    
+      if ($request->filled('retailer_id')) {
+        $query->where('retailer_id', $request->retailer_id);
     }
 
     if ($request->filled('claim_type')) {

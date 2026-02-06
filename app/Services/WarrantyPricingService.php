@@ -87,6 +87,11 @@ class WarrantyPricingService
         $productPrice = $isPercent
             ? ($product->mrp / 100) * $devicePrice
             : $product->mrp;
+            
+        
+        $productMrp = $isPercent
+            ? ($product->mrp / 100) * $devicePrice
+            : $product->mrp;
 
         // ============================
         // PAYOUTS
@@ -123,6 +128,7 @@ class WarrantyPricingService
         return [
 
             'product_price' => round($retailerPending, 2),
+            'product_mrp' => round($productMrp, 2),
 
             'retailer_payout' => round($retailerPayout, 2),
             'employee_payout' => round($employeePayout, 2),
