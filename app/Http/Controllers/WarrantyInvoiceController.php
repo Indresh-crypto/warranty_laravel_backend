@@ -27,7 +27,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\ZohoInvoiceLog;
-
+use GuzzleHttp\Client;
 
 class WarrantyInvoiceController extends Controller
 {

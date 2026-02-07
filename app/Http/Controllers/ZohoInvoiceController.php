@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\ZohoUser;
+use App\Models\Company;
+
 use App\Models\Retailers;
 use App\Models\ZohoInvoice;
 use Illuminate\Support\Facades\Validator;
@@ -104,76 +106,108 @@ class ZohoInvoiceController extends Controller
 
     public function getInvoices(Request $request)
     {
-    $validator = Validator::make($request->all(), [
-        'org_id' => 'nullable|string|exists:org_users,zoho_org_id',
-        'invoice_id' => 'nullable|string',
-        'contact_id' => 'nullable|string',
-        'per_page' => 'nullable|integer|min:1|max:100',
-        'page' => 'nullable|integer|min:1',
-        'flag' => 'nullable|string|in:due_today,paid_today',
-    ]);
-
-    if ($validator->fails()) {
-        return response()->json(['errors' => $validator->errors()], 422);
-    }
-
-    $query = ZohoInvoice::query();
-
-    // Direct filters
-    if ($request->org_id) {
-        $query->where('org_id', $request->org_id);
-    }
-
-    if ($request->invoice_id) {
-        $query->where('invoice_id', 'like', "%{$request->invoice_id}%");
-    }
-
-    if ($request->contact_id) {
-        $query->where('contact_id', 'like', "%{$request->contact_id}%");
-    }
-
-    // Flag logic
-    $today = now()->format('Y-m-d');
-
-    if ($request->flag === 'due_today') {
-        $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(zoho_json, '$.due_date')) = ?", [$today]);
-    }
-
-    if ($request->flag === 'paid_today') {
-        $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(zoho_json, '$.last_payment_date')) = ?", [$today]);
-    }
-
-    // Other searchable fields
-    $searchableFields = (new ZohoInvoice())->getFillable();
-
-    foreach ($request->all() as $key => $value) {
-        if (in_array($key, $searchableFields) && !empty($value)) {
-            $query->where($key, 'like', "%{$value}%");
+        $validator = Validator::make($request->all(), [
+            'company_id' => 'nullable|integer|exists:companies,id',
+            'user_id'    => 'nullable|integer|exists:companies,id',
+            'invoice_id' => 'nullable|string',
+            'contact_id' => 'nullable|string',
+            'per_page'   => 'nullable|integer|min:1|max:100',
+            'page'       => 'nullable|integer|min:1',
+            'flag'       => 'nullable|string|in:due_today,paid_today',
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
         }
-    }
-
-    $paginated = $query->paginate($request->get('per_page', 10));
-
-    // ✅ Modify invoice_status for response only
-    $paginated->getCollection()->transform(function ($item) {
-        $zoho = json_decode($item->zoho_json, true);
-
-        if (
-            isset($item->invoice_status) &&
-            $item->invoice_status === 'partially_paid' &&
-            !empty($zoho['due_date']) &&
-            \Carbon\Carbon::parse($zoho['due_date'])->isFuture()
-        ) 
-        {
-            $item->invoice_status = 'sent'; 
+    
+        /**
+         * ✅ Select only required columns
+         * ❌ zoho_json is intentionally excluded
+         */
+        $query = ZohoInvoice::query()->select([
+            'id',
+            'invoice_id',
+            'contact_id',
+            'org_id',
+            'user_id',
+            'org_code',
+            'org_name',
+            'company_id',
+            'invoice_status',
+            'due_date',
+            'payment_date',
+            'invoice_amount',
+            'balance_amount',
+            'invoice_number',
+            'invoice_url',
+            'invoice_date',
+            'created_at',
+            'updated_at',
+            'zoho_json', // used internally only (removed later)
+        ]);
+    
+        /**
+         * 🔹 Direct filters
+         */
+        if ($request->company_id) {
+            $query->where('org_id', $request->company_id);
         }
-
-        $item->zoho_json = $zoho;
-        return $item;
-    });
-
-    return response()->json($paginated);
-}
+    
+        if ($request->user_id) {
+            $query->where('user_id', $request->user_id);
+        }
+    
+        if ($request->invoice_id) {
+            $query->where('invoice_id', 'like', "%{$request->invoice_id}%");
+        }
+    
+        if ($request->contact_id) {
+            $query->where('contact_id', 'like', "%{$request->contact_id}%");
+        }
+    
+        /**
+         * 🔹 Flag filters (FAST – uses DB columns)
+         */
+        if ($request->flag === 'due_today') {
+            $query->whereDate('due_date', Carbon::today());
+        }
+    
+        if ($request->flag === 'paid_today') {
+            $query->whereDate('payment_date', Carbon::today());
+        }
+    
+        /**
+         * 🔹 Pagination
+         */
+        $paginated = $query->orderByDesc('invoice_date')
+            ->paginate($request->get('per_page', 10));
+    
+        /**
+         * 🔹 Response transformation
+         */
+        $paginated->getCollection()->transform(function ($item) {
+            $zoho = json_decode($item->zoho_json, true);
+    
+            // Modify status only for response
+            if (
+                $item->invoice_status === 'partially_paid' &&
+                !empty($zoho['due_date']) &&
+                Carbon::parse($zoho['due_date'])->isFuture()
+            ) {
+                $item->invoice_status = 'sent';
+            }
+    
+            // ❌ Remove zoho_json from API output
+            unset($item->zoho_json);
+    
+            return $item;
+        });
+    
+        return response()->json([
+            'status' => true,
+            'data'   => $paginated,
+        ]);
+    }
     public function sendZohoInvoiceEmail(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -281,7 +315,7 @@ class ZohoInvoiceController extends Controller
             $emailData
         );
     }
-
+/*
     public function getInvoiceDetails($invoiceId, $userId)
     {
         $orgUser = ZohoUser::findOrFail($userId);
@@ -297,7 +331,7 @@ class ZohoInvoiceController extends Controller
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
-
+*/
     private function zohoGetRequest(string $url, $orgUser, array $queryParams = [])
     {
         $client = new \GuzzleHttp\Client();
@@ -313,147 +347,6 @@ class ZohoInvoiceController extends Controller
         ]);
 
         return json_decode($response->getBody(), true);
-    }
-    
-    public function syncAllInvoices(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'company_id' => 'required|integer|exists:org_users,id',
-            'user_id'    => 'required|integer|exists:org_users,id',
-            'role'       => 'nullable|string'
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-    
-        $orgUser = ZohoUser::find($request->company_id);
-    
-        if (!$orgUser || !$orgUser->zoho_access_token || !$orgUser->zoho_org_id) {
-            return response()->json(['error' => 'Invalid Zoho credentials'], 400);
-        }
-    
-        $client = new Client();
-        $page   = 1;
-        $perPage = 200; // Zoho max
-        $countInvoices = 0;
-    
-        try {
-            // ✅ Truncate table first
-            ZohoInvoice::truncate();
-    
-            do {
-                $response = $client->get("https://www.zohoapis.in/books/v3/invoices", [
-                    'headers' => [
-                        'Authorization' => 'Zoho-oauthtoken ' . $orgUser->zoho_access_token,
-                        'Content-Type'  => 'application/json',
-                    ],
-                    'query' => [
-                        'organization_id' => $orgUser->zoho_org_id,
-                        'per_page' => $perPage,
-                        'page' => $page,
-                    ],
-                ]);
-    
-                $body = json_decode((string) $response->getBody(), true);
-    
-                if (!isset($body['invoices']) || empty($body['invoices'])) {
-                    break;
-                }
-    
-                // Collect all customer IDs for this page
-                $customerIds = collect($body['invoices'])->pluck('customer_id')->filter()->unique();
-                $retailers = ZohoUser::whereIn('zoho_contact_id', $customerIds)
-                                    ->get()
-                                    ->keyBy('zoho_contact_id');
-    
-         
-                
-                  $Rets = Retailers::whereIn('contact_id', $customerIds)
-                                    ->get()
-                                    ->keyBy('contact_id');
-                                    
-                      
-                $inserts = [];
-                foreach ($body['invoices'] as $invoice) {
-                    $productType = null;
-                    foreach ($invoice['custom_fields'] ?? [] as $field) {
-                        if (($field['api_name'] ?? null) === 'cf_policy_type') {
-                            $productType = $field['value'] ?? null;
-                            break;
-                        }
-                    }
-    
-                    $retailer = $retailers[$invoice['customer_id']] ?? null;
-                    
-                    $Ret = $Rets[$invoice['customer_id']] ?? null;
-    
-                    $inserts[] = [
-                        'invoice_id'        => trim((string) $invoice['invoice_id']),
-                        'contact_id'        => $invoice['customer_id'] ?? null,
-                        'zoho_json'         => json_encode($invoice),
-                        'org_id'            => $orgUser->zoho_org_id,
-                        'user_id'           => $retailer->id ?? 0,
-                        'org_code'          => $retailer->org_code ?? '',
-                        'org_name'          => $retailer->business_name ?? '',
-                        'org_mobile'        => $retailer->mobile ?? '',
-                        'role'              => $retailer->role ?? 0,
-                        'company_id'        => $request->company_id,
-                        'due_date'          => $invoice['due_date'] ?? null,
-                        'payment_date'      => $invoice['last_payment_date'] ?? null,
-                        'invoice_amount'    => $invoice['total'] ?? null,
-                        'balance_amount'    => $invoice['balance'] ?? null,
-                        'invoice_status'    => $invoice['status'] ?? null,
-                        'invoice_date'      => $invoice['date'] ?? null,
-                        'invoice_number'    => $invoice['invoice_number'] ?? null,
-                        'customer_name'     => $invoice['customer_name'] ?? null,
-                        'due_days'          => $invoice['due_days'] ?? null,
-                        'invoice_url'       => $invoice['invoice_url'] ?? null,
-                        'salesperson_name'  => $invoice['salesperson_name'] ?? null,
-                        'email'             => $invoice['email'] ?? null,
-                        'write_off_amount'  => $invoice['write_off_amount'] ?? 0,
-                        'product_type'      => $productType,
-                        'created_at'        => now(),
-                        'updated_at'        => now(),
-                        'level1'            => $Ret['level1'] ?? 0,
-                        'level2'            => $Ret['level2'] ?? 0,
-                        'level3'            => $Ret['level3'] ?? 0,
-                        'level4'            => $Ret['level4'] ?? 0,
-                        'level5'            => $Ret['level5'] ?? 0,
-                        'level1_name'       => $Ret['level1_name'] ?? "",
-                        'level2_name'       => $Ret['level2_name'] ?? "",
-                        'level3_name'       => $Ret['level3_name'] ?? "",
-                        'level4_name'       => $Ret['level4_name'] ?? "",
-                        'level5_name'       => $Ret['level5_name'] ?? ""
-                    ];
-                }
-    
-                ZohoInvoice::insert($inserts);
-    
-                $countInvoices += count($body['invoices']);
-                $hasMore = $body['page_context']['has_more_page'] ?? false;
-                $page++;
-    
-            } while ($hasMore && $page <= 50); // Max 10,000 invoices
-    
-            return response()->json([
-                'status' => true,
-                'message' => 'Invoices synced successfully from Zoho.',
-                'count' => $countInvoices,
-            ]);
-    
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            $errorBody = json_decode($e->getResponse()->getBody()->getContents(), true);
-            return response()->json([
-                'status' => false,
-                'error' => $errorBody['message'] ?? $e->getMessage(),
-            ], $e->getResponse()->getStatusCode());
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => false,
-                'error' => $e->getMessage(),
-            ], 500);
-        }
     }
 
     public function syncAllInvoicesTest(Request $request)
@@ -1079,4 +972,218 @@ class ZohoInvoiceController extends Controller
     }
 
 
+    public function syncAllInvoices(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'company_id' => 'required|integer|exists:companies,id',
+       //     'user_id'    => 'required|integer|exists:companies,id',
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+    
+        $company = Company::find($request->company_id);
+    
+        if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+            return response()->json(['error' => 'Invalid Zoho credentials'], 400);
+        }
+    
+        $client   = new Client(['timeout' => 60]);
+        $page     = 1;
+        $perPage  = 200; // Zoho max
+        $total    = 0;
+    
+        try {
+            do {
+                $response = $client->get('https://www.zohoapis.in/books/v3/invoices', [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                    ],
+                    'query' => [
+                        'organization_id' => $company->zoho_org_id,
+                        'page'            => $page,
+                        'per_page'        => $perPage,
+                    ],
+                ]);
+    
+                $body = json_decode($response->getBody(), true);
+    
+                if (empty($body['invoices'])) {
+                    break;
+                }
+    
+                /** 🔹 Collect Zoho customer IDs */
+                $customerIds = collect($body['invoices'])
+                    ->pluck('customer_id')
+                    ->filter()
+                    ->unique();
+    
+                /** 🔹 Map Zoho customers → companies */
+                $retailers = Company::whereIn('zoho_id', $customerIds)
+                    ->get()
+                    ->keyBy('zoho_id');
+    
+                $rows = [];
+    
+                foreach ($body['invoices'] as $invoice) {
+                    $retailer = $retailers[$invoice['customer_id']] ?? null;
+    
+                    $rows[] = [
+                        'invoice_id'     => (string) $invoice['invoice_id'],
+                        'contact_id'     => $invoice['customer_id'] ?? null,
+                        'zoho_json'      => json_encode($invoice),
+                        'org_id'         => $company->id,
+    
+                        'user_id'        => $retailer->id ?? null,
+                        'org_code'       => $retailer->company_code ?? null,
+                        'org_name'       => $retailer->business_name ?? null,
+    
+                        'company_id'     => $request->company_id,
+                        'invoice_status' => $invoice['status'] ?? null,
+                        'invoice_date'   => $invoice['date'] ?? null,
+                        'due_date'       => $invoice['due_date'] ?? null,
+                        'payment_date'   => $invoice['last_payment_date'] ?? null,
+                        'invoice_amount' => $invoice['total'] ?? 0,
+                        'balance_amount' => $invoice['balance'] ?? 0,
+                        'invoice_number' => $invoice['invoice_number'] ?? null,
+                        'invoice_url'    => $invoice['invoice_url'] ?? null,
+    
+                        'created_at'     => now(),
+                        'updated_at'     => now(),
+                    ];
+                }
+    
+                /** 🔥 UPSERT (safe re-sync) */
+                ZohoInvoice::upsert(
+                    $rows,
+                    ['invoice_id', 'org_id'], // unique keys
+                    [
+                        'zoho_json',
+                        'contact_id',
+                        'user_id',
+                        'org_code',
+                        'org_name',
+                        'invoice_status',
+                        'invoice_date',
+                        'due_date',
+                        'payment_date',
+                        'invoice_amount',
+                        'balance_amount',
+                        'invoice_number',
+                        'invoice_url',
+                        'updated_at',
+                    ]
+                );
+    
+                $total += count($rows);
+                $hasMore = $body['page_context']['has_more_page'] ?? false;
+                $page++;
+    
+            } while ($hasMore && $page <= 50); // Zoho safety cap
+    
+            return response()->json([
+                'status' => true,
+                'message' => 'Invoices synced successfully',
+                'count' => $total,
+            ]);
+    
+        } catch (\GuzzleHttp\Exception\ClientException $e) {
+            $error = json_decode($e->getResponse()->getBody(), true);
+            return response()->json([
+                'status' => false,
+                'error'  => $error['message'] ?? 'Zoho API error',
+            ], $e->getResponse()->getStatusCode());
+    
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'error'  => $e->getMessage(),
+            ], 500);
+        }
+    }
+    
+    public function getInvoiceDetails(Request $request)
+    {
+    $validator = Validator::make($request->all(), [
+        'invoice_id' => 'required|string'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 422);
+    }
+
+    $query = ZohoInvoice::query();
+
+    /**
+     * 🔹 Mandatory filter
+     */
+    $query->where('invoice_id', $request->invoice_id);
+
+    /**
+     * 🔹 Optional security scope
+     */
+    if ($request->company_id) {
+        $query->where('org_id', $request->company_id);
+    }
+
+    if ($request->user_id) {
+        $query->where('user_id', $request->user_id);
+    }
+
+    $invoice = $query->first();
+
+    if (!$invoice) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Invoice not found',
+        ], 404);
+    }
+
+    /**
+     * 🔹 Decode Zoho JSON
+     */
+    $zoho = json_decode($invoice->zoho_json, true);
+
+    /**
+     * 🔹 Normalize status (same logic as list API)
+     */
+    if (
+        $invoice->invoice_status === 'partially_paid' &&
+        !empty($zoho['due_date']) &&
+        Carbon::parse($zoho['due_date'])->isFuture()
+    ) {
+        $invoice->invoice_status = 'sent';
+    }
+
+    /**
+     * 🔹 Build clean response
+     */
+    return response()->json([
+        'status' => true,
+        'data' => [
+            'id'              => $invoice->id,
+            'invoice_id'      => $invoice->invoice_id,
+            'invoice_number'  => $invoice->invoice_number,
+            'invoice_status'  => $invoice->invoice_status,
+            'invoice_date'    => $invoice->invoice_date,
+            'due_date'        => $invoice->due_date,
+            'payment_date'    => $invoice->payment_date,
+            'invoice_amount'  => $invoice->invoice_amount,
+            'balance_amount'  => $invoice->balance_amount,
+            'contact_id'      => $invoice->contact_id,
+            'org_id'          => $invoice->org_id,
+            'company_id'      => $invoice->company_id,
+            'user_id'         => $invoice->user_id,
+            'org_code'        => $invoice->org_code,
+            'org_name'        => $invoice->org_name,
+            'invoice_url'     => $invoice->invoice_url,
+            'created_at'      => $invoice->created_at,
+            'updated_at'      => $invoice->updated_at,
+
+            // 🔥 Full Zoho data
+            'zoho'            => $zoho,
+        ]
+    ]);
+}
 }

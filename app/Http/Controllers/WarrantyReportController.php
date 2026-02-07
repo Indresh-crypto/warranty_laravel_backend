@@ -318,4 +318,70 @@ public function geographyRevenue(Request $request)
                 'top' => $data->first(),
             ]);
             }
+            
+
+public function topSellingRetailers(Request $request)
+{
+    $fromDate  = $request->from_date;   // optional
+    $toDate    = $request->to_date;     // optional
+    $companyId = $request->company_id;  // optional (parent company / promoter)
+
+    $query = Company::query()
+        ->select([
+            'companies.id',
+            'companies.business_name as retailer_name',
+            'companies.state',
+            'companies.district',
+            'companies.city',
+            'companies.pincode',
+
+            DB::raw('COUNT(w_devices.id) as total_devices'),
+            DB::raw('COALESCE(SUM(w_devices.product_price),0) as total_sales_value')
+        ])
+        ->join('w_devices', function ($join) {
+            $join->on('w_devices.retailer_id', '=', 'companies.id')
+                 ->where('w_devices.status', 1);
+        })
+        ->where('companies.role', 5) // retailers only
+        ->groupBy(
+            'companies.id',
+            'companies.business_name',
+            'companies.state',
+            'companies.district',
+            'companies.city',
+            'companies.pincode'
+        )
+        ->orderByDesc('total_sales_value');
+
+    /**
+     * 🔹 OPTIONAL DATE FILTER
+     */
+    if ($fromDate && $toDate) {
+        $query->whereBetween('w_devices.created_at', [
+            $fromDate . ' 00:00:00',
+            $toDate   . ' 23:59:59'
+        ]);
+    }
+
+    /**
+     * 🔹 OPTIONAL COMPANY FILTER
+     * (when devices belong to a specific company)
+     */
+    if (!empty($companyId)) {
+        $query->where('w_devices.company_id', $companyId);
+    }
+
+    $data = $query->get();
+
+    return response()->json([
+        'status' => true,
+        'filters' => [
+            'company_id' => $companyId,
+            'from_date'  => $fromDate,
+            'to_date'    => $toDate,
+        ],
+        'data' => $data
+    ]);
+}
+
 }

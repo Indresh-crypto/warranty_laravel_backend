@@ -54,10 +54,12 @@ use App\Http\Controllers\RetailerConnectionController;
         Route::post('/create-invoice', [ZohoInvoiceController::class, 'createZohoInvoice']);
         Route::get('/get-invoices', [ZohoInvoiceController::class, 'getInvoices']);
         Route::post('/create-payment', [ZohoPaymentController::class, 'createPayment']);
-        Route::get('/get-invoices-by-id', [ZohoPaymentController::class, 'getInvoiceDetails']);
+        Route::get('/get-invoices-by-id', [ZohoInvoiceController::class, 'getInvoiceDetails']);
         Route::get('/get-payments', [ZohoPaymentController::class, 'getPayments']);
         Route::post('/update-contact/{contact_id}', [ZohoCustomerController::class, 'updateContact']);
         Route::post('/create-online-payment', [ZohoPaymentController::class, 'createOnlinePayment']);
+        
+         Route::get('/sync-invoices', [ZohoInvoiceController::class, 'syncAllInvoices']);
 
     });
 
@@ -299,6 +301,7 @@ use App\Http\Controllers\RetailerConnectionController;
 
     Route::get('/company-map-dashboard', [CompanyController::class, 'dashboardCounts']);
 
+ Route::get('/top-selling-retailers', [WarrantyReportController::class, 'topSellingRetailers']);
     });
 
     Route::prefix('warrantybuilder')->group(function () {

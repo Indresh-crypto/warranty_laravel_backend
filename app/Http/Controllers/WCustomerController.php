@@ -8,8 +8,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use App\Models\WCustomer;
 use App\Models\WDevice;
-
+use App\Models\Company;
 use DB;
+use GuzzleHttp\Client;
 
 use Illuminate\Support\Str;
 use Carbon\Carbon;
@@ -62,7 +63,8 @@ class WCustomerController extends Controller
                 // Customer fields
                 $q->where('name', 'LIKE', "%{$search}%")
                   ->orWhere('mobile', 'LIKE', "%{$search}%")
-                  ->orWhere('email', 'LIKE', "%{$search}%");
+                  ->orWhere('email', 'LIKE', "%{$search}%")
+                  ->orWhere('c_code', 'LIKE', "%{$search}%");
     
                 // Retailer name
                 $q->orWhereHas('retailer', function ($r) use ($search) {
@@ -247,40 +249,155 @@ class WCustomerController extends Controller
     }
 
     
-    public function updateWarrantyStatus(Request $request, $id)
-    {
-        $validator = Validator::make($request->all(), [
-            'is_approved'   => 'required|integer',
-            'reject_remark' => 'nullable|string|max:500',
-            'note'          => 'required|string',
-        ]);
-    
-        if ($validator->fails()) {
+  public function updateWarrantyStatus(Request $request, $id)
+  {
+    $validator = Validator::make($request->all(), [
+        'is_approved'   => 'required|integer|in:1,2',
+        'reject_remark' => 'nullable|string|max:500',
+        'note'          => 'required|string',
+        'reason'        => 'nullable|string', // credit note reason
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'errors'  => $validator->errors(),
+        ], 422);
+    }
+
+    $device = WDevice::findOrFail($id);
+    $data   = $validator->validated();
+
+    /**
+     * 🔹 Handle rejection
+     */
+    if ($data['is_approved'] == 2) {
+
+        // Set reject date
+        $data['reject_date'] = Carbon::now();
+
+        // 🚫 Credit note already issued
+        if ($device->credit_note) {
             return response()->json([
                 'success' => false,
-                'errors'  => $validator->errors()
-            ], 422);
+                'message' => 'Credit note already issued for this device',
+            ], 409);
         }
-    
-        $device = WDevice::findOrFail($id);
-    
-        $data = $validator->validated();
-    
-        // ✅ Auto set reject_date only when rejected
-        if ($data['is_approved'] == 2) {
-            $data['reject_date'] = Carbon::now(); // current datetime
-        } else {
-            $data['reject_date'] = null; // optional: reset if approved again
+
+        // 🚫 Invoice missing
+        if (!$device->invoice_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No invoice found for this device',
+            ], 400);
         }
-    
-        $device->update($data);
-    
-        return response()->json([
-            'success' => true,
-            'message' => 'Warranty updated successfully',
-            'data'    => $device
-        ], 200);
+
+        /**
+         * 🔐 Company (Zoho org)
+         */
+        $company = Company::where('id', $device->company_id)
+            ->where('role', 2)
+            ->first();
+
+        if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Zoho credentials not found',
+            ], 400);
+        }
+
+        /**
+         * 🏪 Retailer (Zoho customer)
+         */
+        $retailer = Company::find($device->retailer_id);
+
+        if (!$retailer || !$retailer->zoho_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Retailer Zoho contact not found',
+            ], 400);
+        }
+
+        /**
+         * 🧾 Credit note payload
+         */
+        $payload = [
+            'customer_id' => $retailer->zoho_id,
+            'invoice_id'  => $device->invoice_id,
+            'date'        => now()->format('Y-m-d'),
+            'line_items'  => [
+                [
+                    'name'        => $device->product_name ?? 'Warranty Cancellation',
+                    'description' => "Warranty cancelled for device ID {$device->id}",
+                    'rate'        => $device->product_price,
+                    'quantity'    => 1,
+                ],
+            ],
+            'notes'  => $request->reason ?? 'Warranty cancelled',
+            'status' => 4, // approved
+        ];
+
+        $client = new Client(['timeout' => 60]);
+
+        try {
+            $response = $client->post(
+                'https://www.zohoapis.in/books/v3/creditnotes',
+                [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                        'Content-Type'  => 'application/json',
+                    ],
+                    'query' => [
+                        'organization_id' => $company->zoho_org_id,
+                    ],
+                    'json' => $payload,
+                ]
+            );
+
+            $body = json_decode($response->getBody(), true);
+
+            if (empty($body['creditnote']['creditnote_id'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Credit note creation failed',
+                ], 500);
+            }
+
+            // ✅ Save credit note info
+            $data['credit_note']    = $body['creditnote']['creditnote_id'];
+            $data['cd_issued_date'] = now();
+            $data['status_remark']  = 'Warranty cancelled';
+
+        } catch (\GuzzleHttp\Exception\ClientException $e) {
+            $errorBody = json_decode(
+                $e->getResponse()->getBody()->getContents(),
+                true
+            );
+
+            return response()->json([
+                'success' => false,
+                'error'   => $errorBody['message'] ?? $e->getMessage(),
+            ], $e->getResponse()->getStatusCode());
+        }
+    } 
+    /**
+     * 🔹 Approved flow
+     */
+    else {
+        $data['reject_date'] = null;
     }
+
+    /**
+     * ✅ Update device
+     */
+    $device->update($data);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Warranty status updated successfully',
+        'data'    => $device,
+    ], 200);
+}
     
     public function deviceAnalytics(Request $request)
     {
@@ -344,6 +461,7 @@ class WCustomerController extends Controller
               ->orWhere('imei2', 'LIKE', "%{$search}%")
               ->orWhere('serial', 'LIKE', "%{$search}%")
               ->orWhere('product_name', 'LIKE', "%{$search}%")
+              ->orWhere('w_code', 'LIKE', "%{$search}%")
               ->orWhere('brand_name', 'LIKE', "%{$search}%");
 
             // Customer fields
@@ -413,6 +531,23 @@ class WCustomerController extends Controller
     }
 
 
+    /* ================= CREATED_AT DATE FILTER (NEW) ================= */
+        if ($request->filled('from_date') || $request->filled('to_date')) {
+            $fromDate = $request->from_date;
+            $toDate   = $request->to_date;
+    
+            if ($fromDate && $toDate) {
+                $query->whereBetween('created_at', [
+                    $fromDate . ' 00:00:00',
+                    $toDate   . ' 23:59:59',
+                ]);
+            } elseif ($fromDate) {
+                $query->where('created_at', '>=', $fromDate . ' 00:00:00');
+            } elseif ($toDate) {
+                $query->where('created_at', '<=', $toDate . ' 23:59:59');
+            }
+        }
+    
     /* ================= DATE RANGE FILTER ================= */
     if ($request->filled('from_invoice_date') || $request->filled('to_invoice_date')) {
         $from = $request->from_invoice_date;

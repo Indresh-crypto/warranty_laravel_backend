@@ -18,90 +18,111 @@ use Illuminate\Support\Str;
 class CommonAuthController extends Controller
 {
 
-   public function login(Request $request)
-   {
-    $validator = Validator::make($request->all(), [
-        'password' => 'required',
-        'email'    => 'sometimes|email',
-        'phone'    => 'sometimes|string'
-    ]);
 
-    if ($validator->fails()) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'Validation error',
-            'errors'  => $validator->errors()
-        ], 422);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | 1. TRY LOGIN AS COMPANY
-    |--------------------------------------------------------------------------
-    */
-    $company = Company::with('leads')
-        ->where(function ($q) use ($request) {
-            if ($request->email) {
-                $q->where('contact_email', $request->email);
+    public function login(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'password' => 'required',
+            'email'    => 'sometimes|email',
+            'phone'    => 'sometimes|string'
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Validation error',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | 1. TRY LOGIN AS COMPANY
+        |--------------------------------------------------------------------------
+        */
+        $company = Company::with('leads')
+            ->where(function ($q) use ($request) {
+                if ($request->email) {
+                    $q->where('contact_email', $request->email);
+                }
+                if ($request->phone) {
+                    $q->orWhere('contact_phone', $request->phone);
+                }
+            })
+            ->first();
+    
+        if ($company) {
+    
+            // 🚫 Company inactive
+            if ((int) $company->status === 0) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Your account is inactive. Please contact support.'
+                ], 403);
             }
-            if ($request->phone) {
-                $q->orWhere('contact_phone', $request->phone);
+    
+            if (!Hash::check($request->password, $company->password)) {
+                return response()->json([
+                    'status'  => false,
+                    'message' => 'Invalid password'
+                ], 401);
             }
-        })
-        ->first();
-
-    if ($company) {
-        if (!Hash::check($request->password, $company->password)) {
+    
+            return response()->json([
+                'status'  => true,
+                'message' => 'Login successful',
+                'type'    => 'company',
+                'data'    => $company
+            ]);
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | 2. TRY LOGIN AS COMPANY EMPLOYEE
+        |--------------------------------------------------------------------------
+        */
+        $employee = CompanyEmployee::where(function ($q) use ($request) {
+                if ($request->email) {
+                    $q->where('official_email', $request->email);
+                }
+                if ($request->phone) {
+                    $q->orWhere('personal_phone', $request->phone);
+                }
+            })
+            ->first();
+    
+        if (!$employee) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Invalid credentials or user not found'
+            ], 404);
+        }
+    
+        // 🚫 Employee inactive
+        if ((int) $employee->status === 0) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Your account is inactive. Please contact admin.'
+            ], 403);
+        }
+    
+        if (!Hash::check($request->password, $employee->password)) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Invalid password'
             ], 401);
         }
-
+    
+        // Force role for frontend clarity
+        $employee->role = 3;
+    
         return response()->json([
             'status'  => true,
             'message' => 'Login successful',
-            'type'    => 'company',
-            'data'    => $company
+            'type'    => 'company_employee',
+            'data'    => $employee
         ]);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | 2. TRY LOGIN AS COMPANY EMPLOYEE (IF COMPANY NOT FOUND)
-    |--------------------------------------------------------------------------
-    */
-    $employee = CompanyEmployee::where(function ($q) use ($request) {
-            if ($request->email) {
-                $q->where('official_email', $request->email);
-            }
-            if ($request->phone) {
-                $q->orWhere('personal_phone', $request->phone);
-            }
-        })
-        ->first();
-
-    if (!$employee) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'Invalid credentials or user not found'
-        ], 404);
-    }
-
-    if (!Hash::check($request->password, $employee->password)) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'Invalid password'
-        ], 401);
-    }
-    $employee->role=3;
-    return response()->json([
-        'status'  => true,
-        'message' => 'Login successful',
-        'type'    => 'company_employee',
-        'data'    => $employee
-    ]);
-}
     private function generateCode($prefix, $model, $column)
     {
         $last = $model::orderBy('id','desc')->first();

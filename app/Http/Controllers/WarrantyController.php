@@ -34,6 +34,7 @@ use App\Events\WarrantyRegistered;
 use App\Events\WarrantyRegisterWhatsapp;
 use App\Events\WarrantyRegisteredProvision;
 
+use PhpOffice\PhpWord\TemplateProcessor;
 
 class WarrantyController extends Controller
 {
@@ -374,6 +375,7 @@ class WarrantyController extends Controller
                 ], 409);
             }
         
+            $product_mrp = ($request->product_mrp / 100)*$request->device_price; 
             // ✅ Step 1: Create device
             $device = WDevice::create([
                 'name' => $request->name,
@@ -401,13 +403,12 @@ class WarrantyController extends Controller
                 'company_payout' => $request->company_payout,
                 'company_id' => $request->company_id,
                 'product_price' => $request->product_price,
-                'product_mrp' => $request->product_mrp,
+                'product_mrp' => $product_mrp,
                 'agent_id' => $request->agent_id,
                 'created_by' => $request->created_by,
                 'is_approved' => 0,
                 'status'=>0,
                 'is_pay_later'=>$request->is_pay_later,
-                'product_mrp' => $request->product_mrp,
                 'model_id' => $request->model_id
             ]);
         
@@ -1347,7 +1348,7 @@ public function dashboardCounts(Request $request)
         ]);
     }
 
- 
+ /*
  public function generateDeviceCertificate(Request $request)
 {
    
@@ -1387,16 +1388,12 @@ public function dashboardCounts(Request $request)
         ], 422);
     }
 
-    /** -------------------------
-     * Certificate Details
-     * ------------------------*/
+
     $certificateId = 'GX-WNTY-' . now()->year . '-' . str_pad($device->id, 5, '0', STR_PAD_LEFT);
     $verifyUrl = "https://verify.goelectronix.in/cert/{$certificateId}";
     $qrCode = "1";
 
-    /** -------------------------
-     * PDF Generation
-     * ------------------------*/
+
     $pdf = Pdf::loadView('certificate', [
         'certificateId'   => $certificateId,
         'startDate'       => now()->toDateString(),
@@ -1422,22 +1419,18 @@ public function dashboardCounts(Request $request)
         'verifyUrl'       => $verifyUrl,
     ])->setPaper('a4', 'portrait');
 
-    /** -------------------------
-     * Store PDF
-     * ------------------------*/
+
     $pdfPath = "warranty_pdfs/{$certificateId}.pdf";
     Storage::disk('public')->put($pdfPath, $pdf->output());
 
     $certificateLink = Storage::disk('public')->url($pdfPath);
 
-    /** -------------------------
-     * Update Device
-     * ------------------------*/
+    
     $device->update([
         'certificate_link' => $certificateLink
     ]);
 
-    event(new WarrantyRegisterWhatsapp($device->fresh()));
+  //  event(new WarrantyRegisterWhatsapp($device->fresh()));
 
     return response()->json([
         'success'         => true,
@@ -1446,7 +1439,7 @@ public function dashboardCounts(Request $request)
         'certificate_url' => $certificateLink
     ]);
 }
-
+*/
    public function assignProduct(Request $request)
   {
     $validator = Validator::make($request->all(), [
@@ -1654,5 +1647,101 @@ public function agentDashboard(Request $request)
             ]
         ]
     ], 200);
+}
+
+public function generateDeviceCertificate(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'imei1' => 'required'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => $validator->errors()->first(),
+            'errors'  => $validator->errors()
+        ], 422);
+    }
+
+    $device = WDevice::with('customer')
+        ->where('imei1', $request->imei1)
+        ->first();
+
+    if (!$device) {
+        return response()->json([
+            'message' => 'Device not found'
+        ], 404);
+    }
+
+    $customer = $device->customer;
+    $retailer = Company::find($device->retailer_id);
+    $product  = WarrantyProduct::find($device->product_id);
+
+    if (!$customer || !$retailer || !$product) {
+        return response()->json([
+            'message' => 'Related data missing for certificate generation'
+        ], 422);
+    }
+
+    /** Certificate Details */
+    $certificateId = 'GX-WNTY-' . now()->year . '-' . str_pad($device->id, 5, '0', STR_PAD_LEFT);
+    $verifyUrl = "https://verify.goelectronix.in/cert/{$certificateId}";
+
+         $templatePath = storage_path('app/template/WarrantyCertificate.docx');
+    /** Load Template */
+    $templatePath = storage_path('app/template/WarrantyCertificate.docx');
+    $templateProcessor = new TemplateProcessor($templatePath);
+
+    /** Replace Variables */
+    $templateProcessor->setValue('certificateId', $certificateId);
+    $templateProcessor->setValue('customerName', $customer->name);
+    $templateProcessor->setValue('customerPhone', $customer->mobile);
+    $templateProcessor->setValue('brand', $device->brand_name);
+    $templateProcessor->setValue('model', $device->model);
+    $templateProcessor->setValue('category', $device->category_name);
+    $templateProcessor->setValue('imei1', $device->imei1);
+    $templateProcessor->setValue('serial', $device->serial ?? '');
+    $templateProcessor->setValue('planName', $product->name);
+    $templateProcessor->setValue('planSummary', strip_tags($product->features));
+    $templateProcessor->setValue('maxClaims', $device->available_claim);
+    $templateProcessor->setValue('coverageLimit', number_format($device->device_price, 2));
+    $templateProcessor->setValue('retailerName', $retailer->business_name);
+    $templateProcessor->setValue('retailerCode', $retailer->company_code);
+    $templateProcessor->setValue('retailerAddress', $retailer->address_line1);
+    $templateProcessor->setValue('retailerContact', $retailer->contact_phone);
+    $templateProcessor->setValue('startDate', now()->toDateString());
+    $templateProcessor->setValue('endDate', Carbon::parse($device->expiry_date)->toDateString());
+    $templateProcessor->setValue('issuedOn', now()->toDateString());
+    $templateProcessor->setValue('verifyUrl', $verifyUrl);
+
+    /** Ensure folder exists */
+    $folderPath = storage_path('app/public/warranty_pdfs');
+    if (!file_exists($folderPath)) {
+        mkdir($folderPath, 0777, true);
+    }
+
+    /** Save DOCX */
+    $docxFile = "{$folderPath}/{$certificateId}.docx";
+    $templateProcessor->saveAs($docxFile);
+
+    /** Convert DOCX → PDF */
+    $command = "libreoffice --headless --convert-to pdf --outdir {$folderPath} {$docxFile}";
+    exec($command);
+
+    $pdfFileName = "{$certificateId}.pdf";
+    $pdfPath = "warranty_pdfs/{$pdfFileName}";
+    $certificateLink = Storage::disk('public')->url($pdfPath);
+
+    /** Update Device */
+    $device->update([
+        'certificate_link' => $certificateLink
+    ]);
+
+    return response()->json([
+        'success'         => true,
+        'message'         => 'Certificate generated successfully',
+        'certificate_id'  => $certificateId,
+        'certificate_url' => $certificateLink
+    ]);
 }
 }
