@@ -360,6 +360,7 @@ class WarrantyController extends Controller
 
     public function createDevice(Request $request)
     {
+        
             // 🔒 Check duplicate device
            $exists = WDevice::where('product_id', $request->product_id)
             ->where(function ($query) use ($request) {
@@ -368,7 +369,7 @@ class WarrantyController extends Controller
                       ->orWhere('serial', $request->serial);
             })
             ->exists();
-        
+       
             if ($exists) {
                 return response()->json([
                     'message' => 'Device with the same IMEI or Serial already exists.'
@@ -376,9 +377,9 @@ class WarrantyController extends Controller
             }
         
             $product_mrp = ($request->product_mrp / 100)*$request->device_price; 
-            // ✅ Step 1: Create device
+
             $device = WDevice::create([
-                'name' => $request->name,
+                
                 'imei1' => $request->imei1,
                 'imei2' => $request->imei2,
                 'serial' => $request->serial,
@@ -411,7 +412,7 @@ class WarrantyController extends Controller
                 'is_pay_later'=>$request->is_pay_later,
                 'model_id' => $request->model_id
             ]);
-        
+  
             // ✅ Step 2: Generate WRT code using primary key
             $random = strtoupper(Str::random(6)); // A9F3XQ
             $wCode = "WRT-{$device->id}-{$random}";

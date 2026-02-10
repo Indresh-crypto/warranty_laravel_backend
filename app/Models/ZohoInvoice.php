@@ -40,4 +40,9 @@ class ZohoInvoice extends Model
         'invoice_date',
         'org_mobile'
     ];
+    
+     public function devices()
+    {
+        return $this->hasMany(WDevice::class, 'zoho_invoice_id', 'invoice_id');
+    }
 }

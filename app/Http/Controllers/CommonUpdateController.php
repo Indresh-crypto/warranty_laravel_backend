@@ -19,6 +19,11 @@ use App\Jobs\SendCompanyCreatedWhatsapp;
 use App\Jobs\SendAgentPendingWhatsapp;
 use App\Models\CompanyApiLog;
 
+use App\Mail\LeadCreateMail;
+use App\Mail\LeadWonMail;
+
+use Illuminate\Support\Facades\Mail;
+
 class CommonUpdateController extends Controller
 {
   
@@ -91,9 +96,19 @@ class CommonUpdateController extends Controller
         }
         
         /* ================= Status update ================= */
+       
         if ((int) $request->is_verified === 7) {
-            $updateData['status'] = 'won';
-        }
+
+                // Fetch lead safely
+                $lead = WLead::where('email', $request->contact_email)->first();
+            
+                if ($lead && !empty($lead->email)) {
+                    Mail::to($lead->email)->queue(
+                        new LeadWonMail($lead)
+                    );
+                }
+            }
+
         
         /* ================= Apply update ================= */
         if (!empty($updateData)) {
@@ -129,15 +144,9 @@ class CommonUpdateController extends Controller
 
     $leaddata = WLead::where('email', $request->contact_email)->first();
     // Set defaults
-   
-    if($request->role==6)
-    {
-           $data['password']    = Hash::make($request->password);
-    }
-    else
-    {
-        $data['password']    = $leaddata->password ??  Hash::make("123456");
-    }
+   $plainPassword = random_int(100000, 999999);
+  
+    $data['password']    = Hash::make($plainPassword);
     
     $data['status']      = $request->status ?? 1;
     $data['is_verified'] = $request->is_verified ?? 0;
@@ -146,7 +155,12 @@ class CommonUpdateController extends Controller
 
     $data['created_by_id'] =    $leaddata['created_by_id'] ?? 0;
     $data['created_by_name'] =  $leaddata['created_by_name'] ?? '';
+   
+   $signinUrl = "https://goelectronix.com/signin?email=" . urlencode($leaddata->email);
 
+    Mail::to($leaddata->email)
+        ->send(new LeadCreateMail($leaddata, $signinUrl, $plainPassword));
+        
     // Create company
     $user = Company::create($data);
 

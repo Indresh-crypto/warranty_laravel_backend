@@ -9,7 +9,6 @@ use App\Models\Category;
 use App\Models\WCustomer;
 use App\Models\DeviceModel;
 use App\Models\WarrantyProduct;
-use App\Models\CompanyProduct;
 use App\Services\WarrantyPricingService;
 use App\Events\PaymentSuccessful;
 use App\Events\WarrantyRegistered;
@@ -23,6 +22,11 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Foundation\Bus\Dispatchable;
+
+use App\Mail\InvoiceCreatedMail;
+use App\Mail\PaymentCompletedMail;
+use App\Models\Company;
+use Illuminate\Support\Facades\Mail;
 
 class WarrantyPaymentFlowJob implements ShouldQueue
 {
@@ -112,7 +116,6 @@ class WarrantyPaymentFlowJob implements ShouldQueue
 
             $device = WDevice::where('imei1', $this->payload['imei1'])
                 ->where('product_id', $this->payload['product_id'])
-                ->lockForUpdate()
                 ->first();
 
             if (!$device) {
@@ -191,8 +194,23 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             | LOAD CUSTOMER
             |--------------------------------------------------------------------------
             */
+            
+          
+
 
             $warrCustomer = WCustomer::find($this->payload['w_customer_id']);
+            
+            $devicea = WDevice::where('retailer_id', $warrCustomer->retailer_id)->first();
+            
+            $company = \App\Models\Company::find($devicea->retailer_id);
+
+  \Log::critical('EMAIL SECTION ENTERED', [
+                'company' => $company
+            ]);
+            
+            if (!$company) {
+                throw new \Exception('Retailer company not found');
+            }
 
             if (!$warrCustomer) {
                 throw new \Exception('Warranty customer not found');
@@ -362,32 +380,7 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
-            if (!WarrantyFlowLog::where('payment_id', $paymentId)
-                ->where('step', 'ZOHO_PAYMENT_CREATED')
-                ->exists()) {
-
-                $invoiceId = WarrantyFlowLog::where('payment_id', $paymentId)
-                    ->where('step', 'INVOICE_CREATED')
-                    ->value('invoice_id');
-
-                $zohoResponse = app(WarrantyPaymentFlowController::class)
-                    ->createZohoPayment(
-                        $this->payload['company_id'],
-                        $this->payload['retailer_id'],
-                        $paymentId,
-                        $this->payload['amount'],
-                        $invoiceId
-                    );
-
-                WarrantyFlowLog::create([
-                    'payment_id' => $paymentId,
-                    'invoice_id' => $invoiceId,
-                    'zoho_payment_id' => $zohoResponse['payment']['payment_id'] ?? null,
-                    'step' => 'ZOHO_PAYMENT_CREATED',
-                    'status' => 1,
-                    'response_data' => json_encode($zohoResponse)
-                ]);
-            }
+           
 
 
             if (!WarrantyFlowLog::where('payment_id', $paymentId)
@@ -461,35 +454,7 @@ class WarrantyPaymentFlowJob implements ShouldQueue
 
             DB::commit();
 
-            /*
-            |--------------------------------------------------------------------------
-            | STEP 5 : NOTIFICATIONS
-            |--------------------------------------------------------------------------
-            */
-
-            if (!WarrantyFlowLog::where('payment_id', $paymentId)->where('step', 'EMAIL_SENT')->exists()) {
-
-                event(new WarrantyRegistered($device));
-
-                WarrantyFlowLog::create([
-                    'payment_id' => $paymentId,
-                    'device_id' => $device->id,
-                    'step' => 'EMAIL_SENT',
-                    'status' => 1
-                ]);
-            }
-
-            if (!WarrantyFlowLog::where('payment_id', $paymentId)->where('step', 'WHATSAPP_SENT')->exists()) {
-
-                event(new WarrantyRegisterWhatsapp($device));
-
-                WarrantyFlowLog::create([
-                    'payment_id' => $paymentId,
-                    'device_id' => $device->id,
-                    'step' => 'WHATSAPP_SENT',
-                    'status' => 1
-                ]);
-            }
+          
 
         } catch (\Exception $e) {
 
@@ -503,6 +468,68 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             ]);
 
             throw $e;
+        }
+        //
+        
+        /* ============================================================
+         | EMAILS & NOTIFICATIONS (AFTER COMMIT)
+         ============================================================ */
+
+        // 1️⃣ Invoice email (once)
+        if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','INVOICE_MAIL_SENT')->exists()) {
+
+          
+
+
+            Mail::to($company->contact_email)
+                ->queue(new InvoiceCreatedMail(
+                    json_decode($device->invoice_json, true),
+                    json_decode($device->invoice_json, true)['invoice_url'] ?? '#'
+                ));
+
+            WarrantyFlowLog::create([
+                'payment_id' => $paymentId,
+                'step' => 'INVOICE_MAIL_SENT',
+                'status' => 1
+            ]);
+        }
+
+        /*
+        if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','PAYMENT_MAIL_SENT')->exists()) {
+
+            Mail::to($company->contact_email)
+                ->queue(new PaymentCompletedMail(
+                    $device->fresh(['customer'])
+                ));
+
+            WarrantyFlowLog::create([
+                'payment_id' => $paymentId,
+                'device_id'  => $device->id,
+                'step' => 'PAYMENT_MAIL_SENT',
+                'status' => 1
+            ]);
+        }
+
+*/
+        // 3️⃣ Existing notifications
+        if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','EMAIL_SENT')->exists()) {
+            event(new WarrantyRegistered($device));
+            WarrantyFlowLog::create([
+                'payment_id' => $paymentId,
+                'device_id' => $device->id,
+                'step' => 'EMAIL_SENT',
+                'status' => 1
+            ]);
+        }
+
+        if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','WHATSAPP_SENT')->exists()) {
+            event(new WarrantyRegisterWhatsapp($device));
+            WarrantyFlowLog::create([
+                'payment_id' => $paymentId,
+                'device_id' => $device->id,
+                'step' => 'WHATSAPP_SENT',
+                'status' => 1
+            ]);
         }
     }
 

@@ -15,7 +15,8 @@ use GuzzleHttp\Client;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
 use App\Events\CustomerRegistered;
-
+use App\Mail\WarrantyCancelledMail;
+use Illuminate\Support\Facades\Log;
 
 class WCustomerController extends Controller
 {
@@ -367,7 +368,20 @@ class WCustomerController extends Controller
             $data['credit_note']    = $body['creditnote']['creditnote_id'];
             $data['cd_issued_date'] = now();
             $data['status_remark']  = 'Warranty cancelled';
+            
+            Log::info('CANCEL MAIL DEBUG – CUSTOMER CHECK', [
+                'device_id' => $device->id,
+                'w_customer_id' => $device->w_customer_id,
+                'customer_exists' => $device->customer ? true : false,
+                'customer_email' => optional($device->customer)->email,
+            ]);
 
+            Mail::to($device->customer->email)
+                ->queue(new WarrantyCancelledMail(
+                    $device->fresh(['customer','product.coverages']),
+                    $request->reason
+            ));
+    
         } catch (\GuzzleHttp\Exception\ClientException $e) {
             $errorBody = json_decode(
                 $e->getResponse()->getBody()->getContents(),

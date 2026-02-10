@@ -162,6 +162,19 @@ class RazorpayWebhookController extends Controller
         return response()->json(['status' => 'update queued'], 200);
     }
 
+   if ($project === 'warranty' && $service === 'update_pay_later') {
+    
+        \App\Jobs\UpdatePayLaterInvoiceJob::dispatch([
+            'payment_id'  => $payment['id'],
+            'invoice_id'  => $payment['notes']['invoice_id'],
+            'company_id'  => $payment['notes']['company_id'],
+            'retailer_id' => $payment['notes']['retailer_id'],
+            'amount'      => $payment['amount'] / 100
+        ]);
+    
+        return response()->json(['status' => 'update pay later queued'], 200);
+    }
+        
     // ==================================================
     // CREATE WARRANTY FLOW
     // ==================================================

@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\ZohoUser;
 use App\Models\Company;
-
+use App\Models\WDevice;
 use App\Models\Retailers;
 use App\Models\ZohoInvoice;
 use Illuminate\Support\Facades\Validator;
@@ -1103,86 +1103,77 @@ class ZohoInvoiceController extends Controller
         }
     }
     
-    public function getInvoiceDetails(Request $request)
-    {
+   public function getInvoiceDetails(Request $request)
+  {
     $validator = Validator::make($request->all(), [
         'invoice_id' => 'required|string'
     ]);
 
     if ($validator->fails()) {
-        return response()->json(['errors' => $validator->errors()], 422);
+        return response()->json([
+            'errors' => $validator->errors()
+        ], 422);
     }
 
-    $query = ZohoInvoice::query();
+    $query = WDevice::query();
 
-    /**
-     * 🔹 Mandatory filter
-     */
+    // Filter by invoice_id
     $query->where('invoice_id', $request->invoice_id);
 
-    /**
-     * 🔹 Optional security scope
-     */
+    // Optional filter: company
     if ($request->company_id) {
-        $query->where('org_id', $request->company_id);
+        $query->where('company_id', $request->company_id);
     }
 
-    if ($request->user_id) {
-        $query->where('user_id', $request->user_id);
+    // Optional filter: retailer
+    if ($request->retailer_id) {
+        $query->where('retailer_id', $request->retailer_id);
     }
 
-    $invoice = $query->first();
+    $device = $query->first();
 
-    if (!$invoice) {
+    if (!$device) {
         return response()->json([
             'status' => false,
-            'message' => 'Invoice not found',
+            'message' => 'Invoice not found'
         ], 404);
     }
 
-    /**
-     * 🔹 Decode Zoho JSON
-     */
-    $zoho = json_decode($invoice->zoho_json, true);
+    $zoho = json_decode($device->invoice_json, true);
 
-    /**
-     * 🔹 Normalize status (same logic as list API)
-     */
+    // Adjust partially_paid logic
     if (
-        $invoice->invoice_status === 'partially_paid' &&
+        $device->invoice_status === 'partially_paid' &&
         !empty($zoho['due_date']) &&
         Carbon::parse($zoho['due_date'])->isFuture()
     ) {
-        $invoice->invoice_status = 'sent';
+        $device->invoice_status = 'sent';
     }
 
-    /**
-     * 🔹 Build clean response
-     */
     return response()->json([
         'status' => true,
         'data' => [
-            'id'              => $invoice->id,
-            'invoice_id'      => $invoice->invoice_id,
-            'invoice_number'  => $invoice->invoice_number,
-            'invoice_status'  => $invoice->invoice_status,
-            'invoice_date'    => $invoice->invoice_date,
-            'due_date'        => $invoice->due_date,
-            'payment_date'    => $invoice->payment_date,
-            'invoice_amount'  => $invoice->invoice_amount,
-            'balance_amount'  => $invoice->balance_amount,
-            'contact_id'      => $invoice->contact_id,
-            'org_id'          => $invoice->org_id,
-            'company_id'      => $invoice->company_id,
-            'user_id'         => $invoice->user_id,
-            'org_code'        => $invoice->org_code,
-            'org_name'        => $invoice->org_name,
-            'invoice_url'     => $invoice->invoice_url,
-            'created_at'      => $invoice->created_at,
-            'updated_at'      => $invoice->updated_at,
+            'device_id'        => $device->id,
+            'invoice_id'       => $device->invoice_id,
+            'invoice_number'   => $zoho['invoice_number'] ?? null,
+            'invoice_status'   => $device->invoice_status,
+            'invoice_date'     => $zoho['date'] ?? null,
+            'due_date'         => $zoho['due_date'] ?? null,
+            'invoice_amount'   => $zoho['total'] ?? null,
+            'balance_amount'   => $zoho['balance'] ?? null,
+            'invoice_url'      => $zoho['invoice_url'] ?? null,
 
-            // 🔥 Full Zoho data
-            'zoho'            => $zoho,
+            // Device Info
+            'imei1'            => $device->imei1,
+            'product_name'     => $device->product_name,
+            'customer_id'      => $device->w_customer_id,
+            'retailer_id'      => $device->retailer_id,
+            'company_id'       => $device->company_id,
+
+            'created_at'       => $device->created_at,
+            'updated_at'       => $device->updated_at,
+
+            'zoho'             => $zoho
         ]
     ]);
 }

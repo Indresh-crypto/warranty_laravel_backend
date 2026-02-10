@@ -72,7 +72,7 @@ class CommonAuthController extends Controller
                 'status'  => true,
                 'message' => 'Login successful',
                 'type'    => 'company',
-                'data'    => $company
+                'data'    =>  $company
             ]);
         }
     
@@ -98,13 +98,7 @@ class CommonAuthController extends Controller
             ], 404);
         }
     
-        // 🚫 Employee inactive
-        if ((int) $employee->status === 0) {
-            return response()->json([
-                'status'  => false,
-                'message' => 'Your account is inactive. Please contact admin.'
-            ], 403);
-        }
+       
     
         if (!Hash::check($request->password, $employee->password)) {
             return response()->json([

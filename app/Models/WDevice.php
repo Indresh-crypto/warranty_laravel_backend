@@ -11,7 +11,6 @@ class WDevice extends Model
 
     protected $table = 'w_devices';
     protected $fillable = [  
-        'id',
         'name',
         'imei1',
         'imei2',

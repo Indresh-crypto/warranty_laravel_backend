@@ -108,7 +108,7 @@ class WarrantyPaymentFlowController extends Controller
     ]);
 }
 
-
+/*
     public function createWarrantyInvoice($device,$company_id,$retailer_id,$product_id,$payment_id,$amount) 
     {
         try {
@@ -214,6 +214,157 @@ class WarrantyPaymentFlowController extends Controller
                 'message' => $e->getMessage()
             ];
         }
+    }
+*/
+    public function createWarrantyInvoice(
+            $device,
+            $company_id,
+            $retailer_id,
+            $product_id,
+            $payment_id,
+            $amount
+        ) 
+        {
+            try {
+        
+                /*
+                |--------------------------------------------------------------------------
+                | COMPANY (ZOHO ORG)
+                |--------------------------------------------------------------------------
+                */
+        
+                $company = Company::find($company_id);
+        
+                if (!$company) {
+                    throw new \Exception('Company not found');
+                }
+        
+                if (!$company->zoho_access_token || !$company->zoho_org_id) {
+                    throw new \Exception('Company Zoho credentials missing');
+                }
+        
+                /*
+                |--------------------------------------------------------------------------
+                | RETAILER (ZOHO CUSTOMER)
+                |--------------------------------------------------------------------------
+                */
+        
+                $retailer = Company::find($retailer_id);
+        
+                if (!$retailer || !$retailer->zoho_id) {
+                    throw new \Exception('Retailer Zoho contact id missing');
+                }
+        
+                /*
+                |--------------------------------------------------------------------------
+                | WARRANTY CUSTOMER DETAILS
+                |--------------------------------------------------------------------------
+                */
+        
+                $customer = \App\Models\WCustomer::find($device->w_customer_id);
+        
+                if (!$customer) {
+                    throw new \Exception('Warranty customer not found');
+                }
+        
+                $customerDetails = 
+                    "Warranty Customer Details\n"
+                    . "---------------------------\n"
+                    . "Name: {$customer->name}\n"
+                    . "Mobile: {$customer->mobile}\n"
+                    . "Email: {$customer->email}\n"
+                    . "Address: {$customer->address1} {$customer->address2}\n"
+                    . "City: {$customer->city}\n"
+                    . "State: {$customer->state}\n"
+                    . "Pincode: {$customer->pincode}\n"
+                    . "Customer Code: {$customer->c_code}\n"
+                    . "Device IMEI: {$device->imei1}\n"
+                    . "Warranty Code: {$device->w_code}";
+        
+                /*
+                |--------------------------------------------------------------------------
+                | PRODUCT ITEM MAPPING
+                |--------------------------------------------------------------------------
+                */
+        
+                $companyProduct = CompanyProduct::where('company_id', $company_id)
+                    ->where('product_id', $product_id)
+                    ->first();
+        
+                if (!$companyProduct || !$companyProduct->zoho_item_id) {
+                    throw new \Exception('Zoho item id missing for company product mapping');
+                }
+        
+                /*
+                |--------------------------------------------------------------------------
+                | BUILD INVOICE PAYLOAD
+                |--------------------------------------------------------------------------
+                */
+        
+                $payload = [
+        
+                    'customer_id' => $retailer->zoho_id,
+        
+                    'reference_number' => 'WTY-' . $device->id . '-' . $payment_id,
+        
+                    'date' => now()->toDateString(),
+        
+                    // 👇 ADD CUSTOMER DETAILS HERE
+                    'notes' => $customerDetails,
+        
+                    'line_items' => [
+                        [
+                            'item_id' => $companyProduct->zoho_item_id,
+                            'name' => $device->product_name ?? 'Warranty Activation',
+                            'description' => 'IMEI: ' . $device->imei1,
+                            'rate' => $device->product_price > 0
+                                ? $device->product_price
+                                : $amount,
+                            'quantity' => 1
+                        ]
+                    ]
+                ];
+        
+                /*
+                |--------------------------------------------------------------------------
+                | SEND TO ZOHO
+                |--------------------------------------------------------------------------
+                */
+        
+                $client = new \GuzzleHttp\Client();
+        
+                $response = $client->post(
+                    'https://www.zohoapis.in/books/v3/invoices',
+                    [
+                        'headers' => [
+                            'Authorization' =>
+                                'Zoho-oauthtoken ' . $company->zoho_access_token
+                        ],
+                        'query' => [
+                            'organization_id' => $company->zoho_org_id
+                        ],
+                        'json' => $payload
+                    ]
+                );
+        
+                $body = json_decode($response->getBody(), true);
+        
+                if (empty($body['invoice'])) {
+                    throw new \Exception(json_encode($body));
+                }
+        
+                return [
+                    'success' => true,
+                    'invoice' => $body['invoice']
+                ];
+        
+            } catch (\Exception $e) {
+        
+                return [
+                    'success' => false,
+                    'message' => $e->getMessage()
+                ];
+            }
     }
 
     public function createZohoPayment($company_id,$retailer_id,$payment_id,$amount,$invoiceId)

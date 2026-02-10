@@ -16,6 +16,8 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\DB;
 use GuzzleHttp\Client;
+use App\Models\OnlinePayment;
+
 
 class UpdateWarrantyPaymentJob implements ShouldQueue
 {
@@ -296,7 +298,13 @@ class UpdateWarrantyPaymentJob implements ShouldQueue
 
             DB::commit();
 
-            event(new PaymentSuccessful($device));
+         //   event(new PaymentSuccessful($device));
+            
+            $onlinePayment = OnlinePayment::where('payment_id', $paymentId)->first();
+            
+            if ($onlinePayment) {
+                event(new PaymentSuccessful($onlinePayment));
+            }
 
         } catch (\Exception $e) {
 
