@@ -63,6 +63,13 @@ class UpdatePayLaterInvoiceJob implements ShouldQueue
                 throw new \Exception('Company Zoho credentials missing');
             }
 
+            /* ================= LOAD RETAILER ================= */
+            $retailer = Company::find($this->payload['retailer_id']);
+
+            if (!$retailer) {
+                throw new \Exception('Retailer not found');
+            }
+
             /* ================= FETCH DEVICES ================= */
             $devices = WDevice::where('invoice_id', $invoiceId)->get();
 
@@ -188,17 +195,25 @@ class UpdatePayLaterInvoiceJob implements ShouldQueue
         /* ============================================================
          |  SEND INVOICE EMAIL (ONCE, AFTER COMMIT)
          ============================================================ */
+
+        Log::info('INVOICE MAIL TO RETAILER', [
+            'email' => $retailer->contact_email
+        ]);
+
         if (
             !WarrantyFlowLog::where('payment_id', $paymentId)
                 ->where('step', 'INVOICE_MAIL_SENT')
                 ->exists()
         ) {
 
-            Mail::to($company->contact_email)
-                ->queue(new InvoiceCreatedMail(
-                    $finalInvoice,
-                    $finalInvoice['invoice_url'] ?? '#'
-                ));
+            if (!empty($retailer->contact_email)) {
+
+                Mail::to($retailer->contact_email)
+                    ->queue(new InvoiceCreatedMail(
+                        $finalInvoice,
+                        $finalInvoice['invoice_url'] ?? '#'
+                    ));
+            }
 
             WarrantyFlowLog::create([
                 'payment_id' => $paymentId,
@@ -210,6 +225,7 @@ class UpdatePayLaterInvoiceJob implements ShouldQueue
         /* ============================================================
          |  PER-DEVICE EVENTS + PAYMENT EMAIL
          ============================================================ */
+
         foreach ($devicesForMail as $device) {
 
             event(new WarrantyRegistered($device));

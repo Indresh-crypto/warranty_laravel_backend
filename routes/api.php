@@ -42,6 +42,9 @@ use App\Http\Controllers\EarningController;
 use App\Http\Controllers\RetailerConnectionController;
 
 
+    Route::post('/send-warranty-test', [WhatsappController::class, 'sendWarrantyTest']);
+
+
     Route::prefix('zoho')->group(function () {
         Route::get('/update-token', [ZohoCustomerController::class, 'updateZohoAccessToken']);
         Route::post('/zoho-users', [ZohoCustomerController::class, 'signupUser']);
@@ -361,6 +364,7 @@ use App\Http\Controllers\RetailerConnectionController;
         Route::post('/payments/{paymentId}/regenerate-invoice',[AdminPaymentController::class, 'regenerateInvoice']);
 
     });
+
 
 
 

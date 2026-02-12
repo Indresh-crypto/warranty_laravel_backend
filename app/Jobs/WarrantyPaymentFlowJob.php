@@ -195,18 +195,14 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
             
-          
-
-
             $warrCustomer = WCustomer::find($this->payload['w_customer_id']);
             
-            $devicea = WDevice::where('retailer_id', $warrCustomer->retailer_id)->first();
             
-            $company = \App\Models\Company::find($devicea->retailer_id);
+            $company = \App\Models\Company::latest()->first();
 
-  \Log::critical('EMAIL SECTION ENTERED', [
-                'company' => $company
-            ]);
+              \Log::critical('EMAIL SECTION ENTERED', [
+                            'company' => $company
+                        ]);
             
             if (!$company) {
                 throw new \Exception('Retailer company not found');
@@ -511,6 +507,8 @@ class WarrantyPaymentFlowJob implements ShouldQueue
         }
 
 */
+
+
         // 3️⃣ Existing notifications
         if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','EMAIL_SENT')->exists()) {
             event(new WarrantyRegistered($device));

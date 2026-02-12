@@ -57,7 +57,7 @@ public function createZohoItem(Request $request)
         "name"         => $request->name,
         "rate"         => $request->rate,
         "description"  => $request->description ?? 'Default Item Description',
-        "product_type" => $request->product_type ?? 'goods',
+        "product_type" => $request->product_type ?? 'service',
         "is_taxable"   => $request->is_taxable ?? true,
     ];
 

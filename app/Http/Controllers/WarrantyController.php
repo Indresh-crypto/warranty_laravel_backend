@@ -431,6 +431,17 @@ class WarrantyController extends Controller
            
            event(new WarrantyRegisteredProvision($device));
            
+           try {
+                    app(\App\Services\WhatsappService::class)
+                        ->sendWarrantyProvision($device);
+                } catch (\Exception $e) {
+                    \Log::error('Provision WhatsApp failed', [
+                        'device_id' => $device->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+
+
             return response()->json([
                 'message' => 'Device created successfully',
                 'device' => $device
@@ -655,8 +666,7 @@ class WarrantyController extends Controller
         $product->update([
             'name'          => $request->name,
             'image'         => $request->image,
-            'zoho_id'       => $request->zoho_id,
-            'hsn_code'      => $request->hsn_code,
+            'hsn_code'      => $request->hsn_or_sac,
             'validity'      => $request->validity,
             'claims'        => $request->claims,
             'product_value' => $request->product_value,
@@ -824,7 +834,7 @@ class WarrantyController extends Controller
             "name" => $request->name,
             "rate" => $request->mrp ?? 0,
             "hsn_or_sac" => $request->hsn_or_sac,
-            "description" => $request->features ?? 'Default Item Description',
+            "description" => $request->features ?? 'Item Description',
             "product_type" => $request->product_type ?? 'service',
             "is_taxable" => $request->is_taxable ?? true,
         ];

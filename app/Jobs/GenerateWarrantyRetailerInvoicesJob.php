@@ -26,11 +26,12 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
     {
         /*
         |--------------------------------------------------------------------------
-        | STEP 1: LOAD ELIGIBLE DEVICES (PAY LATER + NOT BULK INVOICED)
+        | STEP 1: LOAD ELIGIBLE DEVICES
         |--------------------------------------------------------------------------
         */
 
-        $rawDevices = WDevice::where('is_pay_later', 1)
+        $rawDevices = WDevice::with('customer')
+            ->where('is_pay_later', 1)
             ->whereNull('invoice_status')
             ->orderBy('company_id')
             ->orderBy('retailer_id')
@@ -38,7 +39,7 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
 
         Log::info('BULK-INVOICE: RAW DEVICES', [
             'count' => $rawDevices->count(),
-            'ids' => $rawDevices->pluck('id')->toArray()
+            'ids'   => $rawDevices->pluck('id')->toArray()
         ]);
 
         if ($rawDevices->isEmpty()) {
@@ -78,7 +79,7 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
 
                     /*
                     |--------------------------------------------------------------------------
-                    | STEP 2: BUILD LINE ITEMS (1 DEVICE = 1 LINE ITEM)
+                    | STEP 2: BUILD LINE ITEMS (WITH CUSTOMER DETAILS)
                     |--------------------------------------------------------------------------
                     */
 
@@ -96,12 +97,18 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
                             );
                         }
 
+                        $customer = $device->customer;
+
+                        $description  = ($device->w_code ?? '-') . "\n";     // Warranty ID
+                        $description .= ($customer->name ?? '-') . "\n";
+                        $description .= ($device->model ?? '-') . "\n";
+                        
                         $lineItems[] = [
                             'item_id'     => $companyProduct->zoho_item_id,
                             'name'        => $device->product_name,
                             'rate'        => $device->product_price,
                             'quantity'    => 1,
-                            'description' => 'IMEI: ' . $device->imei1
+                            'description' => $description
                         ];
                     }
 
@@ -120,9 +127,10 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
                     $payload = [
                         'customer_id' => $retailer->zoho_id,
                         'reference_number' =>
-                            'WTY-BULK-' . now()->format('Ym') . '-' . $retailerId . '-' . time(),
+                            'WTY-BLK-' . now()->format('Ym') . '-' . $retailerId . '-' . time(),
                         'date' => now()->toDateString(),
-                        'line_items' => $lineItems
+                        'line_items' => $lineItems,
+                        'is_inclusive_tax'=>true
                     ];
 
                     $client = new Client();
@@ -155,7 +163,7 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
                     |--------------------------------------------------------------------------
                     */
 
-                   $client->post(
+                    $client->post(
                         "https://www.zohoapis.in/books/v3/invoices/{$invoice['invoice_id']}/status/sent",
                         [
                             'headers' => [
@@ -167,7 +175,7 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
                             ]
                         ]
                     );
-                    
+
                     $getResponse = $client->get(
                         "https://www.zohoapis.in/books/v3/invoices/{$invoice['invoice_id']}",
                         [
@@ -182,29 +190,27 @@ class GenerateWarrantyRetailerInvoicesJob implements ShouldQueue
                     );
 
                     $getBody = json_decode($getResponse->getBody(), true);
-                    
+
                     if (empty($getBody['invoice'])) {
-                        throw new \Exception('Unable to fetch updated invoice from Zoho');
+                        throw new \Exception('Unable to fetch updated invoice');
                     }
-                    
+
                     $updatedInvoice = $getBody['invoice'];
 
                     /*
                     |--------------------------------------------------------------------------
-                    | STEP 4: UPDATE ALL DEVICES
+                    | STEP 4: UPDATE DEVICES
                     |--------------------------------------------------------------------------
                     */
 
-                                       
                     WDevice::whereIn('id', $retailerDevices->pluck('id'))
                         ->update([
                             'invoice_id'           => $updatedInvoice['invoice_id'],
                             'invoice_status'       => $updatedInvoice['status'] ?? 'sent',
                             'invoice_created_date' => $updatedInvoice['date'] ?? now()->toDateString(),
                             'invoice_json'         => json_encode($updatedInvoice),
-                    
                             'status'               => 1,
-                            'is_approved'          => 0 
+                            'is_approved'          => 0
                         ]);
 
                     /*
