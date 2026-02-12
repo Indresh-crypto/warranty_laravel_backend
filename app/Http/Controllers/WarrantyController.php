@@ -535,27 +535,27 @@ class WarrantyController extends Controller
     ], 200);
 }
     public function createCategory(Request $request)
-    {
-        $validated = $request->validate([
+{
+
+
+    $validated = $request->validate([
         'name' => 'required|string|max:255',
         'image' => 'nullable',
         'description' => 'nullable|string',
         'status'=>'nullable'
-        ]);
+    ]);
 
-        $brand = Category::create([
-            'name' => $validated['name'],
-            'image' => $validated['image'] ?? null,
-            'description' => $validated['description'] ?? null,
-            'status'=>$validated['status']
-        ]);
+    $brand = Category::create([
+        'name' => $validated['name'],
+        'image' => $validated['image'] ?? null,
+        'description' => $validated['description'] ?? null,
+        'status'=>$validated['status']
+    ]);
 
-     
-        return response()->json([
-            'message' => 'Category created successfully',
-        ], 201);
-    }
-    
+    return response()->json([
+        'message' => 'Category created successfully',
+    ], 201);
+}
     
 
 

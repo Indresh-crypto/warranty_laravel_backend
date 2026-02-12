@@ -33,7 +33,10 @@ class CompanyEmployee extends Model
         'employee_type',
         'location_mode',
         'photo_url',
-        'password_changed_at'
+        'password_changed_at',
+        'logo',
+        'domain',
+        'title'
     ];
 
     protected $casts = [

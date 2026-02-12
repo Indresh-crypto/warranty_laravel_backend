@@ -29,13 +29,15 @@ class CompanyEmployeeController extends Controller
         'first_name'       => 'required|string',
         'personal_phone'   => 'required|string|unique:company_employee,personal_phone',
         'official_email'   => 'nullable|email|unique:company_employee,official_email',
-        'password'         => 'required|min:6',
+        'password'         => 'nullable',
         'employee_type'      => 'required',
+        'logo'              => 'nullable',
+        'domain'            => 'nullable',
+        'title'             => 'nullable'
         ],[
         'company_id.required'     => 'Company ID is required',
         'first_name.required'     => 'First name is required',
-        'personal_phone.required' => 'Phone number is required',
-        'password.required'       => 'Password is required',
+        'personal_phone.required' => 'Phone number is required'
     ]);
 
     if ($validator->fails()) {
@@ -73,9 +75,10 @@ class CompanyEmployeeController extends Controller
 
         'state'             => $request->state,
         'district'          => $request->district,
-         'employee_type'     => $request->employee_type,
-
-        'password'          => Hash::make($request->password),
+        'employee_type'     => $request->employee_type,
+        'logo'             => $request->logo,
+        'domain'           => $request->domain,
+        'title'            => $request->title
     ]);
 
     /*
@@ -84,11 +87,15 @@ class CompanyEmployeeController extends Controller
     |--------------------------------------------------------------------------
     */
    
+    $plainPassword = (string) random_int(100000, 999999);
+    
+    $emp->password = Hash::make($plainPassword);
+
     $emp->employee_id = 'EMP-' . $emp->id;
     $emp->save();
 
- $plainPassword= $request->password;
     event(new EmployeeCreated($emp, $plainPassword));
+    
     return response()->json([
         'status'  => true,
         'message' => 'Employee created successfully',
@@ -138,89 +145,132 @@ class CompanyEmployeeController extends Controller
      */
     public function allEmployees(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'company_id' => 'required|integer',
-            'per_page'   => 'sometimes|integer|min:1|max:100'
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json([
-                'status'  => false,
-                'message' => 'Validation error',
-                'errors'  => $validator->errors()
-            ], 422);
-        }
-    
-        $perPage = $request->per_page ?? 10;
-    
-        $employees = CompanyEmployee::query()
-            ->with([
-                'company'
-            ])
-            ->where('company_id', $request->company_id)
-    
-            // 🔍 Name search
-            ->when($request->name, function ($q) use ($request) {
-                $q->where(function ($sub) use ($request) {
-                    $sub->where('first_name', 'like', "%{$request->name}%")
-                        ->orWhere('middle_name', 'like', "%{$request->name}%")
-                        ->orWhere('last_name', 'like', "%{$request->name}%");
-                });
-            })
-    
-            // 🔍 Global search
-            ->when($request->search_value, function ($q) use ($request) {
-                $search = trim($request->search_value);
-    
-                $q->where(function ($sub) use ($search) {
-                    $sub->where('first_name', 'like', "%{$search}%")
-                        ->orWhere('middle_name', 'like', "%{$search}%")
-                        ->orWhere('last_name', 'like', "%{$search}%")
-                        ->orWhere('official_email', 'like', "%{$search}%")
-                        ->orWhere('personal_phone', 'like', "%{$search}%")
-                        ->orWhere('official_phone', 'like', "%{$search}%")
-                        ->orWhere('employee_id', 'like', "%{$search}%")
-                        ->orWhere('position', 'like', "%{$search}%")
-                        ->orWhere('state', 'like', "%{$search}%")
-                        ->orWhere('district', 'like', "%{$search}%")
-                        ->orWhere('employee_type', 'like', "%{$search}%")
-                        ->orWhere('type_of_user', 'like', "%{$search}%");
-                });
-            })
-    
-            ->when($request->position, fn ($q) =>
-                $q->whereIn('position', array_map('trim', explode(',', $request->position)))
-            )
-            ->when($request->type_of_user, fn ($q) => $q->where('type_of_user', $request->type_of_user))
-            ->when($request->employee_type, fn ($q) => $q->where('employee_type', $request->employee_type))
-            ->when($request->reports_to, fn ($q) => $q->where('reports_to', $request->reports_to))
-    
-            ->when($request->state, fn ($q) =>
-                $q->whereIn('state', array_map('trim', explode(',', $request->state)))
-            )
-            ->when($request->district, fn ($q) =>
-                $q->whereIn('district', array_map('trim', explode(',', $request->district)))
-            )
-    
-            ->when($request->phone, function ($q) use ($request) {
-                $q->where(function ($sub) use ($request) {
-                    $sub->where('personal_phone', $request->phone)
-                        ->orWhere('official_phone', $request->phone);
-                });
-            })
-    
-            ->when($request->email, fn ($q) => $q->where('official_email', $request->email))
-            ->when($request->location_mode, fn ($q) => $q->where('location_mode', $request->location_mode))
-    
-            ->orderByDesc('id')
-            ->paginate($perPage);
-    
+    $validator = Validator::make($request->all(), [
+        'company_id' => 'required|integer',
+        'per_page'   => 'sometimes|integer|min:1|max:100'
+    ]);
+
+    if ($validator->fails()) {
         return response()->json([
-            'status'  => true,
-            'message' => 'Employees list with company details',
-            'data'    => $employees
-        ]);
+            'status'  => false,
+            'message' => 'Validation error',
+            'errors'  => $validator->errors()
+        ], 422);
     }
+
+    $perPage = $request->per_page ?? 10;
+
+    $employees = CompanyEmployee::query()
+        ->where('company_id', $request->company_id)
+
+        // 🔍 Name search
+        ->when($request->name, function ($q) use ($request) {
+            $q->where(function ($sub) use ($request) {
+                $sub->where('first_name', 'like', "%{$request->name}%")
+                    ->orWhere('middle_name', 'like', "%{$request->name}%")
+                    ->orWhere('last_name', 'like', "%{$request->name}%");
+            });
+        })
+
+        ->when($request->position, fn ($q) =>
+            $q->whereIn('position', array_map('trim', explode(',', $request->position)))
+        )
+
+        ->when($request->type_of_user, fn ($q) => $q->where('type_of_user', $request->type_of_user))
+        ->when($request->employee_type, fn ($q) => $q->where('employee_type', $request->employee_type))
+        ->when($request->reports_to, fn ($q) => $q->where('reports_to', $request->reports_to))
+
+        ->when($request->state, fn ($q) =>
+            $q->whereIn('state', array_map('trim', explode(',', $request->state)))
+        )
+
+        ->when($request->district, fn ($q) =>
+            $q->whereIn('district', array_map('trim', explode(',', $request->district)))
+        )
+
+        ->when($request->phone, function ($q) use ($request) {
+            $q->where(function ($sub) use ($request) {
+                $sub->where('personal_phone', $request->phone)
+                    ->orWhere('official_phone', $request->phone);
+            });
+        })
+
+        ->when($request->email, fn ($q) => $q->where('official_email', $request->email))
+        ->when($request->location_mode, fn ($q) => $q->where('location_mode', $request->location_mode))
+
+
+->when($request->search_value, function ($q) use ($request) {
+    $search = trim($request->search_value);
+
+    $q->where(function ($sub) use ($search) {
+        $sub->where('first_name', 'like', "%{$search}%")
+            ->orWhere('middle_name', 'like', "%{$search}%")
+            ->orWhere('last_name', 'like', "%{$search}%")
+            ->orWhere('official_email', 'like', "%{$search}%")
+            ->orWhere('personal_phone', 'like', "%{$search}%")
+            ->orWhere('official_phone', 'like', "%{$search}%")
+            ->orWhere('position', 'like', "%{$search}%")
+            ->orWhere('state', 'like', "%{$search}%")
+            ->orWhere('district', 'like', "%{$search}%")
+            ->orWhere('employee_type', 'like', "%{$search}%")
+            ->orWhere('type_of_user', 'like', "%{$search}%");
+    });
+})
+
+        ->orderBy('id', 'desc')
+        ->paginate($perPage)
+
+        // 🔥 Attach lead summary per employee (pagination-safe)
+        ->through(function ($emp) {
+
+            $leadQuery = WLead::where('created_by_id', $emp->id);
+
+            $totalLeads = $leadQuery->count();
+
+            $statusCounts = [
+                'new'        => (clone $leadQuery)->where('status', 'new')->count(),
+                'in_process' => (clone $leadQuery)->where('status', 'in process')->count(),
+                'won'        => (clone $leadQuery)->where('status', 'won')->count(),
+                'lost'       => (clone $leadQuery)->where('status', 'lost')->count(),
+            ];
+
+            $statusAmounts = [
+                'new'        => (clone $leadQuery)->where('status', 'new')->sum('lead_amount'),
+                'in_process' => (clone $leadQuery)->where('status', 'in process')->sum('lead_amount'),
+                'won'        => (clone $leadQuery)->where('status', 'won')->sum('lead_amount'),
+                'lost'       => (clone $leadQuery)->where('status', 'lost')->sum('lead_amount'),
+            ];
+
+            $leadTypeCounts = [
+                'type_2' => (clone $leadQuery)->where('lead_type', 2)->count(),
+                'type_4' => (clone $leadQuery)->where('lead_type', 4)->count(),
+                'type_5' => (clone $leadQuery)->where('lead_type', 5)->count(),
+            ];
+
+            $totalLeadAmount = (clone $leadQuery)->sum('lead_amount');
+
+            $conversionRate = $totalLeads > 0
+                ? round(($statusCounts['won'] / $totalLeads) * 100, 2)
+                : 0;
+
+            $emp->summary = [
+                'total_leads'       => $totalLeads,
+                'status_counts'     => $statusCounts,
+                'status_amounts'    => $statusAmounts,
+                'lead_type_counts'  => $leadTypeCounts,
+                'total_lead_amount' => $totalLeadAmount,
+                'conversion_rate'   => $conversionRate . '%'
+            ];
+
+            return $emp;
+        });
+
+    return response()->json([
+        'status'  => true,
+        'message' => 'Employees list with lead summary',
+        'data'    => $employees
+    ]);
+} 
         /**
          * Dynamic Filter Search
          */

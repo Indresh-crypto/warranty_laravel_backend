@@ -19,10 +19,10 @@ class PaymentCompletedMail extends Mailable implements ShouldQueue
         $this->device = $device;
     }
 
-    public function build()
+   public function build()
     {
         return $this->subject('Payment Successful – Warranty Activated')
-            ->view('emails.payment_completed')
+            ->markdown('emails.payment_completed')
             ->with([
                 'device' => $this->device,
                 'customer' => $this->device->customer,
