@@ -16,6 +16,7 @@ use App\Models\PriceTemplate;
 use App\Models\WCustomer;
 use App\Models\Companies;
 use App\Models\WDevice;
+
 use App\Models\Wclaim;
 use App\Models\ZohoInvoice;
 use Illuminate\Http\Request;
@@ -375,8 +376,17 @@ class WarrantyController extends Controller
                     'message' => 'Device with the same IMEI or Serial already exists.'
                 ], 409);
             }
-        
-            $product_mrp = ($request->product_mrp / 100)*$request->device_price; 
+            
+            $product = WarrantyProduct::findOrFail($request->product_id);
+            
+            $product_mrp = 0;
+            
+            if ($product->is_percent) {
+                $product_mrp = ((float)$request->product_mrp / 100)
+                             * (float)$request->device_price;
+            }else{
+                $product_mrp = $request->product_mrp;
+            }
 
             $device = WDevice::create([
                 
@@ -1510,6 +1520,7 @@ public function dashboardCounts(Request $request)
             "hsn_or_sac"   => $product->hsn_code,
             "product_type" => "service",
             "description" => $product->features,
+            "is_taxable" =>   true,
         ];
 
         try {

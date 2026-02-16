@@ -26,6 +26,94 @@ use GuzzleHttp\Exception\RequestException;
 class WhatsappController extends Controller
 {
 
+    public function sendWarrantyTest(Request $request)
+    {
+      
+        $request->validate([
+            'device_id' => 'required|exists:w_devices,id'
+        ]);
+
+        $device = WDevice::with('customer')->find($request->device_id);
+
+        if (!$device || !$device->customer || empty($device->customer->mobile)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Customer mobile missing'
+            ], 400);
+        }
+
+        if (empty($device->certificate_link)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Certificate link missing'
+            ], 400);
+        }
+
+        $customer = $device->customer;
+
+        $destination = '91' . ltrim($customer->mobile, '0');
+
+        $companyDetails = Company::find($device->company_id);
+        $companyName = $companyDetails->business_name ?? 'Goelectronix';
+
+        try {
+            $client = new Client();
+
+            $response = $client->post(
+                'https://api.gupshup.io/wa/api/v1/template/msg',
+                [
+                    'headers' => [
+                        'apikey' => config('services.gupshup.key'),
+                        'Content-Type' => 'application/x-www-form-urlencoded',
+                    ],
+                    'form_params' => [
+                        'channel' => 'whatsapp',
+                        'source' => '15557661628',
+                        'destination' => '919039128100',
+                        'src.name' => 'GoelectronixWarranty',
+
+                        'template' => json_encode([
+                            'id' => '7daef5bb-b87c-41e8-a646-b179277da272',
+                            'params' => [
+                                $customer->name,
+                                $device->brand_name,
+                                $device->model,
+                                $device->imei1 ?? $device->serial,
+                                $device->product_name,
+                                $device->expiry_date,
+                                $device->category_name,
+                                "+919372011028",
+                                "hello@goelectronix.com",
+                                $companyName
+                            ],
+                        ]),
+
+                        'message' => json_encode([
+                            'type' => 'document',
+                            'document' => [
+                                'link' => $device->certificate_link,
+                                'filename' => 'Warranty_' . $device->w_code . '.pdf',
+                            ],
+                        ]),
+                    ],
+                ]
+            );
+
+            return response()->json([
+                'status' => true,
+                'message' => 'WhatsApp Sent Successfully',
+                'gupshup_response' => json_decode($response->getBody(), true)
+            ]);
+
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'WhatsApp Failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
     private function optInUser($apiKey, $appName, $phone)
     {
         $response = Http::withHeaders([
@@ -229,94 +317,5 @@ class WhatsappController extends Controller
         ];
     }
 }
-
-    public function sendWarrantyTest(Request $request)
-    {
-      
-        $request->validate([
-            'device_id' => 'required|exists:w_devices,id'
-        ]);
-
-        $device = WDevice::with('customer')->find($request->device_id);
-
-        if (!$device || !$device->customer || empty($device->customer->mobile)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Customer mobile missing'
-            ], 400);
-        }
-
-        if (empty($device->certificate_link)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Certificate link missing'
-            ], 400);
-        }
-
-        $customer = $device->customer;
-
-        $destination = '91' . ltrim($customer->mobile, '0');
-
-        $companyDetails = Company::find($device->company_id);
-        $companyName = $companyDetails->business_name ?? 'Goelectronix';
-
-        try {
-            $client = new Client();
-
-            $response = $client->post(
-                'https://api.gupshup.io/wa/api/v1/template/msg',
-                [
-                    'headers' => [
-                        'apikey' => config('services.gupshup.key'),
-                        'Content-Type' => 'application/x-www-form-urlencoded',
-                    ],
-                    'form_params' => [
-                        'channel' => 'whatsapp',
-                        'source' => '15557661628',
-                        'destination' => $destination,
-                        'src.name' => 'GoelectronixWarranty',
-
-                        'template' => json_encode([
-                            'id' => '7daef5bb-b87c-41e8-a646-b179277da272',
-                            'params' => [
-                                $customer->name,
-                                $device->brand_name,
-                                $device->model,
-                                $device->imei1 ?? $device->serial,
-                                $device->product_name,
-                                $device->expiry_date,
-                                $device->category_name,
-                                "+919372011028",
-                                "hello@goelectronix.com",
-                                $companyName
-                            ],
-                        ]),
-
-                        'message' => json_encode([
-                            'type' => 'document',
-                            'document' => [
-                                'link' => $device->certificate_link,
-                                'filename' => 'Warranty_' . $device->w_code . '.pdf',
-                            ],
-                        ]),
-                    ],
-                ]
-            );
-
-            return response()->json([
-                'status' => true,
-                'message' => 'WhatsApp Sent Successfully',
-                'gupshup_response' => json_decode($response->getBody(), true)
-            ]);
-
-        } catch (\Exception $e) {
-
-            return response()->json([
-                'status' => false,
-                'message' => 'WhatsApp Failed',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
 }
 

@@ -40,6 +40,7 @@ class CommonAuthController extends Controller
         | 1. TRY LOGIN AS COMPANY
         |--------------------------------------------------------------------------
         */
+        $packageId = null;
         $company = Company::with('leads')
             ->where(function ($q) use ($request) {
                 if ($request->email) {
@@ -53,6 +54,13 @@ class CommonAuthController extends Controller
     
         if ($company) {
     
+    
+
+            if ($company && $company->leads->isNotEmpty()) {
+                $packageId = $company->leads->first()->package_id;
+            }
+
+
             // 🚫 Company inactive
             if ((int) $company->status === 0) {
                 return response()->json([
@@ -72,7 +80,8 @@ class CommonAuthController extends Controller
                 'status'  => true,
                 'message' => 'Login successful',
                 'type'    => 'company',
-                'data'    =>  $company
+                'data'    =>  $company,
+                'package_id' => $packageId
             ]);
         }
     

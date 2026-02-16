@@ -15,7 +15,9 @@ use App\Mail\LeadCreateMail;
 
 use Illuminate\Support\Facades\Mail;
 
-
+use App\Jobs\SendCompanyCreatedWhatsapp;
+use App\Jobs\SendAgentPendingWhatsapp;
+use DB;
 class WleadController extends Controller
 {
     /**
@@ -103,22 +105,149 @@ public function store(Request $request)
         'lead_code' => $leadCode
     ]);
 
-    // Send email
-    $signinUrl = "https://goelectronix.com/signin?email=" . urlencode($lead->email);
-
-    Mail::to($lead->email)
-        ->send(new LeadCreateMail($lead, $signinUrl, $plainPassword));
-
     return response()->json([
         'status'  => true,
-        'message' => 'User lead created successfully and email sent',
+        'message' => 'User lead created successfully and email sent.',
         'data'    => $lead
     ], 201);
 }
 
-    /**
-     * Login user
-     */
+
+public function update(Request $request, $id)
+{
+    $lead = WLead::find($id);
+
+    if (!$lead) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Lead not found'
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dynamic Validation Rules
+    |--------------------------------------------------------------------------
+    */
+
+    $rules = [];
+
+    if ($request->filled('name')) {
+        $rules['name'] = 'string|max:255';
+    }
+
+    if ($request->filled('phone')) {
+        $rules['phone'] = 'string|max:20|unique:w_leads,phone,' . $id;
+    }
+
+    if ($request->filled('email')) {
+        $rules['email'] = 'email|unique:w_leads,email,' . $id;
+    }
+
+    if ($request->filled('pincode')) {
+        $rules['pincode'] = 'digits:6';
+    }
+
+    $validator = Validator::make($request->all(), $rules);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status'  => false,
+            'message' => 'Validation error',
+            'errors'  => $validator->errors()
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Allowed Fields
+    |--------------------------------------------------------------------------
+    */
+
+    $allowedFields = [
+        'name','phone','email','state','district','pincode',
+        'address1','address2','status','lead_amount',
+        'created_by_id','created_by_name','owner_name','lead_type',
+        'package_id','package_name','badge_name','badge_id',
+        'benefits','eligibility','company_id','manager_id',
+        'agent_id','formdata','form_ref','pay_now','pay_later',
+        'updated_by_id','updated_by_name'
+    ];
+
+    $updateData = [];
+
+    foreach ($allowedFields as $field) {
+
+        // ✅ Only update if value is NOT null
+        if ($request->has($field) && !is_null($request->$field)) {
+            $updateData[$field] = $request->$field;
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Password Handling
+    |--------------------------------------------------------------------------
+    */
+
+    if ($request->filled('password')) {
+        $updateData['password'] = Hash::make($request->password);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pincode Handling
+    |--------------------------------------------------------------------------
+    */
+
+    if ($request->filled('pincode')) {
+
+        $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
+
+        if (!$pincodeData) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid Pincode'
+            ], 422);
+        }
+
+        $updateData['state_in']    = $pincodeData->state_in;
+        $updateData['district_in'] = $pincodeData->district_in;
+
+        $updateData['lead_code'] =
+            $pincodeData->state_in . '-' .
+            $pincodeData->district_in . '-' .
+            $request->pincode . '-' .
+            $lead->id;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | If Nothing To Update
+    |--------------------------------------------------------------------------
+    */
+
+    if (empty($updateData)) {
+        return response()->json([
+            'status' => false,
+            'message' => 'No valid data provided for update'
+        ], 400);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Update Lead
+    |--------------------------------------------------------------------------
+    */
+
+    $lead->update($updateData);
+
+    return response()->json([
+        'status'  => true,
+        'message' => 'Lead updated successfully.',
+        'data'    => $lead->fresh()
+    ]);
+}
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -299,59 +428,152 @@ public function store(Request $request)
     /**
      * Update status
      */
-    public function updateStatus(Request $request, $id)
-    {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required',
-            'remark' => 'nullable|string',
-            'updated_by_id' => 'nullable|integer',
-            'updated_by_name' => 'nullable|string'
-        ],[
-            'status.required' => 'Status is required'
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json([
-                'status'  => false,
-                'message' => 'Validation error',
-                'errors'  => $validator->errors()
-            ], 422);
-        }
-    
-        $lead = WLead::find($id);
-    
-        if (!$lead) {
-            return response()->json([
-                'status' => false,
-                'message' => 'User not found'
-            ], 404);
-        }
-    
-        // Update fields
+   
+   public function updateStatus(Request $request, $id)
+   {
+    $validator = Validator::make($request->all(), [
+        'status' => 'required',
+        'remark' => 'nullable|string',
+        'updated_by_id' => 'nullable|integer',
+        'updated_by_name' => 'nullable|string'
+    ], [
+        'status.required' => 'Status is required'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status'  => false,
+            'message' => 'Validation error',
+            'errors'  => $validator->errors()
+        ], 422);
+    }
+
+    $lead = WLead::find($id);
+
+    if (!$lead) {
+        return response()->json([
+            'status' => false,
+            'message' => 'User not found'
+        ], 404);
+    }
+
+    DB::beginTransaction();
+
+    try {
+
+        // Update lead
         $lead->status = $request->status;
-    
-        if ($request->has('remark')) {
+
+        if ($request->filled('remark')) {
             $lead->remark = $request->remark;
         }
-    
-        // Optional update_by fields
-        if ($request->has('updated_by_id')) {
+
+        if ($request->filled('updated_by_id')) {
             $lead->updated_by_id = $request->updated_by_id;
         }
-    
-        if ($request->has('updated_by_name')) {
+
+        if ($request->filled('updated_by_name')) {
             $lead->updated_by_name = $request->updated_by_name;
         }
-    
+
         $lead->save();
-    
+
+        /*
+        |--------------------------------------------------------------------------
+        | Create Company if status = in progress
+        |--------------------------------------------------------------------------
+        */
+
+        if ($request->status === "in progress") {
+
+            $pincodeData = IndiaPincode::where('pincode', $lead->pincode)->first();
+
+           $agent = null;;
+           
+           if (!empty($request->agent_id)) {
+                $agent = Company::find($request->agent_id);
+            }
+            
+            
+            if (!$pincodeData) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid pincode'
+                ], 422);
+            }
+
+            $stateIn    = $pincodeData->state_in;
+            $districtIn = $pincodeData->district_in;
+
+            $plainPassword = random_int(100000, 999999);
+
+            $companyData = [
+                'business_name' => $lead->name,
+                'contact_email' => $lead->email,
+                'contact_person' => $lead->owner_name,
+                'contact_phone' => $lead->phone,
+                'password' => Hash::make($plainPassword),
+                'address_line1' => $lead->address1,
+                'address_line2' => $lead->address2,
+                'city' => $lead->district,
+                'district' => $lead->district,
+                'state' => $lead->state,
+                'pincode' => $lead->pincode,
+                'status' => 1,
+                'role' => $lead->lead_type, // assuming retailer
+                'created_by_id' => $lead->created_by_id ?? 0,
+                'created_by_name' => $lead->created_by_name ?? '',
+                'company_id' => $lead->company_id,
+                'senior_id' => $lead->agent_id,
+                'agent_code' => $agent->company_code ?? "",
+                'pay_now' => $lead->pay_now,
+            ];
+
+            $user = Company::create($companyData);
+
+            $userCode = "RET-{$user->id}-{$stateIn}-{$districtIn}";
+
+            $user->update([
+                'company_code' => $userCode
+            ]);
+
+
+            $signinUrl = "https://retailer.goelectronix.com/signin?email=" . urlencode($lead->email);
+
+            Mail::to($lead->email)
+                ->send(new LeadCreateMail($lead, $signinUrl, $plainPassword));
+
+            DB::commit();
+            
+            SendCompanyCreatedWhatsapp::dispatch($user->id);
+
+
+            return response()->json([
+                'status'  => true,
+                'message' => 'Company created successfully and credentials emailed',
+                'data'    => $user->refresh()
+            ], 201);
+        }
+
+        DB::commit();
+
         return response()->json([
             'status'  => true,
             'message' => 'Status updated successfully',
             'data'    => $lead
         ]);
-    }
 
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status' => false,
+            'message' => 'Something went wrong',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
     
     public function sendWelcomeEmail($companyId)
     {
@@ -406,7 +628,7 @@ public function store(Request $request)
     
         // ✅ Mark email verified
         $company->update([
-            'otp' => null,
+          //  'otp' => null,
             'is_mail_verified' => 1
         ]);
     

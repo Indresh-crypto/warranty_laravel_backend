@@ -21,6 +21,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/razorpay/webhook',
             'api/esign/webhook'
         ]);
+        
+          $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
+
 
     })
     ->withExceptions(function (Exceptions $exceptions): void {

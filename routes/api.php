@@ -69,6 +69,7 @@ use App\Http\Controllers\RetailerConnectionController;
        Route::prefix('warranty')->group(function () {
     
         Route::post('/wlead/store', [WleadController::class, 'store']);
+        Route::post('/wlead/update/{id}', [WleadController::class, 'update']);
         Route::post('/wlead/login', [WleadController::class, 'login']);
         Route::get('/wlead/list', [WleadController::class, 'index']);
         Route::post('/wlead/status/{id}', [WleadController::class, 'updateStatus']);

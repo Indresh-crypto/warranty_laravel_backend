@@ -54,6 +54,19 @@ We're excited to have you on board.
           letter-spacing:1px; color:#0d47a1;">
 {{ $customer->c_code }}
 </p>
+
+<p style="margin-top:4; font-size:13px; color:#64748b;">Registered Email</p>
+<p style="margin:6px 0 0; font-size:16px; font-weight:700;
+          letter-spacing:1px; color:#0d47a1;">
+{{ $customer->email }}
+</p>
+
+
+<a style="margin:6px 0 0; font-size:16px; font-weight:700;
+          letter-spacing:1px; color:#0d47a1;" href="https://customerwarranty.goelectronix.co.in">
+Login Link
+</a>
+
 </td>
 </tr>
 </table>
@@ -63,6 +76,7 @@ You can now:
 </p>
 
 <ul style="padding-left:18px; margin:10px 0 20px; color:#374151;">
+<li>Login with registered email.</li>
 <li>Register your devices</li>
 <li>Activate and manage warranties</li>
 <li>Track warranty status and claims</li>

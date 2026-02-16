@@ -122,5 +122,17 @@ return [
         'driver' => env('APP_MAINTENANCE_DRIVER', 'file'),
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
+    
+    'cors' => [
+    'paths' => ['api/*', 'storage/*', '*'],
+    'allowed_methods' => ['*'],
+    'allowed_origins' => ['*'],
+    'allowed_origins_patterns' => [],
+    'allowed_headers' => ['*'],
+    'exposed_headers' => [],
+    'max_age' => 0,
+    'supports_credentials' => true,
+],
+
 
 ];

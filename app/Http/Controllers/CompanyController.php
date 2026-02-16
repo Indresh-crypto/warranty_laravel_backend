@@ -356,7 +356,7 @@ public function sendResetLink(Request $request)
     ]);
 
     $status = Password::broker('companies')->sendResetLink([
-        'contact_email' => $request->email   // ✅ MUST MATCH COLUMN
+        'contact_email' => $request->email  
     ]);
 
     return response()->json([

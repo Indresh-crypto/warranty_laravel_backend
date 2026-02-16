@@ -200,10 +200,6 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             
             $company = \App\Models\Company::latest()->first();
 
-              \Log::critical('EMAIL SECTION ENTERED', [
-                            'company' => $company
-                        ]);
-            
             if (!$company) {
                 throw new \Exception('Retailer company not found');
             }
@@ -520,6 +516,8 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             ]);
         }
 
+        event(new WarrantyRegisterWhatsapp($device));
+  
         if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','WHATSAPP_SENT')->exists()) {
             event(new WarrantyRegisterWhatsapp($device));
             WarrantyFlowLog::create([

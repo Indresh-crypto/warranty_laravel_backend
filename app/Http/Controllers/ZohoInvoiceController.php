@@ -120,10 +120,6 @@ class ZohoInvoiceController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
     
-        /**
-         * ✅ Select only required columns
-         * ❌ zoho_json is intentionally excluded
-         */
         $query = ZohoInvoice::query()->select([
             'id',
             'invoice_id',
@@ -143,7 +139,7 @@ class ZohoInvoiceController extends Controller
             'invoice_date',
             'created_at',
             'updated_at',
-            'zoho_json', // used internally only (removed later)
+            'zoho_json', 
         ]);
     
         /**
@@ -153,6 +149,10 @@ class ZohoInvoiceController extends Controller
             $query->where('org_id', $request->company_id);
         }
     
+       if ($request->org_code) {
+            $query->where('org_code', $request->org_code);
+        }
+        
         if ($request->user_id) {
             $query->where('user_id', $request->user_id);
         }
@@ -164,10 +164,15 @@ class ZohoInvoiceController extends Controller
         if ($request->contact_id) {
             $query->where('contact_id', 'like', "%{$request->contact_id}%");
         }
+          if ($request->invoice_number) {
+            $query->where('invoice_number', 'like', "%{$request->invoice_number}%");
+        }
     
-        /**
-         * 🔹 Flag filters (FAST – uses DB columns)
-         */
+     if ($request->invoice_status) {
+            $query->where('invoice_status', 'like', "%{$request->invoice_status}%");
+        }
+    
+      
         if ($request->flag === 'due_today') {
             $query->whereDate('due_date', Carbon::today());
         }

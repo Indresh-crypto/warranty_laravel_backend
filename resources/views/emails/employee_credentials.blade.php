@@ -62,6 +62,13 @@
                         {{ $password }}
                       </span>
                     </p>
+                    
+                    <p style="margin:6px 0;">
+                    
+                      <a href="https://retailer.goelectronix.co.in" style="background:#111827; color:#ffffff; padding:4px 8px; border-radius:4px; font-family:monospace;text-align:center;">
+                        Login here
+                      </span>
+                    </p>
 
                   </td>
                 </tr>

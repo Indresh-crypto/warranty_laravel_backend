@@ -142,8 +142,7 @@ class ZohoPaymentController extends Controller
     
         return response()->json($paginated);
     }
-
-
+/*
 public function createOnlinePayment(Request $request)
 {
     Log::channel('payment')->info('Payment API called', [
@@ -158,8 +157,8 @@ public function createOnlinePayment(Request $request)
         'payment_date'   => 'nullable',
         'invoice_id'     => 'nullable',
         'invoice_number' => 'nullable',
-        'customer_id'    => 'required|string',
-        'payment_from'   => 'nullable|string'
+        'customer_id'    => 'required',
+        'payment_from'   => 'nullable'
     ]);
 
     if ($validator->fails()) {
@@ -192,9 +191,9 @@ public function createOnlinePayment(Request $request)
     DB::beginTransaction();
 
     try {
-        /** =========================
-         * 1️⃣ CREATE PAYMENT RECORD
-         * ========================= */
+       
+         // 1️⃣ CREATE PAYMENT RECORD
+   
         $payment = OnlinePayment::create($data);
         DB::commit();
 
@@ -203,9 +202,9 @@ public function createOnlinePayment(Request $request)
             'razorpay_payment_id' => $data['payment_id']
         ]);
 
-        /** =========================
-         * 2️⃣ RAZORPAY STATUS CHECK
-         * ========================= */
+       
+         // 2️⃣ RAZORPAY STATUS CHECK
+      
         $razorClient = new Client([
             'auth' => [
                 config('services.razorpay.razorpay_key'),
@@ -237,9 +236,9 @@ public function createOnlinePayment(Request $request)
             ]);
         }
 
-        /** =========================
-         * 3️⃣ CAPTURE (ONLY IF NEEDED)
-         * ========================= */
+       
+         // 3️⃣ CAPTURE (ONLY IF NEEDED)
+       
         if (!$isCaptured) {
             try {
                 Log::channel('payment')->info('Razorpay capture started', [
@@ -278,9 +277,9 @@ public function createOnlinePayment(Request $request)
             }
         }
 
-        /** =========================
-         * 4️⃣ UPDATE CAPTURE STATUS
-         * ========================= */
+       
+      //   * 4️⃣ UPDATE CAPTURE STATUS
+    
         $payment->update([
             'is_captured'       => $isCaptured ? 1 : 0,
             'capture_response' => $razorpayResponseData
@@ -288,13 +287,19 @@ public function createOnlinePayment(Request $request)
                 : null
         ]);
 
-        /** =========================
-         * 5️⃣ ZOHO PAYMENT
-         * ========================= */
+        
+        // * 5️⃣ ZOHO PAYMENT
+       
         if ($isCaptured && $data['company_id']) {
 
             $company = Company::find($data['company_id']);
 
+            if ($company) {
+                $company->is_verified = 2;
+                $company->is_payment_success = 1;
+                $company->save();
+            }
+            
             if ($company) {
                 try {
                     $zohoPayload = [
@@ -345,9 +350,9 @@ public function createOnlinePayment(Request $request)
             }
         }
 
-        /** =========================
-         * FINAL RESPONSE
-         * ========================= */
+        
+      //   * FINAL RESPONSE
+    
         return response()->json([
             'status' => true,
             'message' => 'Payment processed successfully',
@@ -369,7 +374,191 @@ public function createOnlinePayment(Request $request)
         ], 500);
     }
 }
+*/
 
+
+public function createOnlinePayment(Request $request)
+{
+    Log::channel('payment')->info('Payment API called', [
+        'payload' => $request->all()
+    ]);
+
+    $validator = Validator::make($request->all(), [
+        'user_id'        => 'nullable|integer',
+        'company_id'     => 'nullable|integer',
+        'payment_id'     => 'required|string',
+        'amount'         => 'required|numeric|min:0.01',
+        'payment_date'   => 'nullable|date',
+        'invoice_id'     => 'nullable',
+        'invoice_number' => 'nullable',
+        'customer_id'    => 'required',
+        'payment_from'   => 'nullable'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    $data = $validator->validated();
+    $data['status']      = 1;
+    $data['is_captured'] = 0;
+    $data['zoho_status'] = 0;
+
+    try {
+
+        /** =========================
+         * IDEMPOTENCY CHECK
+         * ========================= */
+        $existing = OnlinePayment::where('payment_id', $data['payment_id'])->first();
+        if ($existing) {
+            return response()->json([
+                'status' => true,
+                'message' => 'Payment already processed',
+                'data' => $existing
+            ], 200);
+        }
+
+        DB::beginTransaction();
+
+        /** =========================
+         * CREATE PAYMENT RECORD
+         * ========================= */
+        $payment = OnlinePayment::create($data);
+
+        DB::commit();
+
+        /** =========================
+         * RAZORPAY CLIENT
+         * ========================= */
+        $razorClient = new Client([
+            'auth' => [
+                config('services.razorpay.razorpay_key'),
+                config('services.razorpay.razorpay_secret'),
+            ],
+            'timeout' => 15,
+        ]);
+
+        $isCaptured = false;
+        $razorpayResponseData = null;
+
+        /** =========================
+         * FETCH PAYMENT STATUS
+         * ========================= */
+        $fetchResponse = $razorClient->get(
+            "https://api.razorpay.com/v1/payments/{$data['payment_id']}"
+        );
+
+        $razorpayResponseData = json_decode($fetchResponse->getBody(), true);
+
+        if (($razorpayResponseData['status'] ?? '') === 'captured') {
+            $isCaptured = true;
+        }
+
+        /** =========================
+         * CAPTURE IF NOT CAPTURED
+         * ========================= */
+        if (!$isCaptured) {
+
+            $captureResponse = $razorClient->post(
+                "https://api.razorpay.com/v1/payments/{$data['payment_id']}/capture",
+                [
+                    'json' => [
+                        'amount'   => (int) ($data['amount'] * 100),
+                        'currency' => 'INR',
+                    ]
+                ]
+            );
+
+            $razorpayResponseData = json_decode($captureResponse->getBody(), true);
+
+            if (($razorpayResponseData['status'] ?? '') !== 'captured') {
+                throw new \Exception('Razorpay capture failed');
+            }
+
+            $isCaptured = true;
+        }
+
+        /** =========================
+         * UPDATE CAPTURE STATUS
+         * ========================= */
+        $payment->update([
+            'is_captured'       => 1,
+            'capture_response'  => json_encode($razorpayResponseData)
+        ]);
+
+        /** =========================
+         * ZOHO PAYMENT
+         * ========================= */
+        if ($isCaptured && $data['company_id']) {
+
+            $company = Company::findOrFail($data['company_id']);
+
+            $company->update([
+                'is_payment_success' => 1
+            ]);
+
+            $zohoPayload = [
+                "customer_id"      => $data['customer_id'],
+                "payment_mode"     => "WARRANTY",
+                "amount"           => $data['amount'],
+                "date"             => $data['payment_date']
+                                        ? date('Y-m-d', strtotime($data['payment_date']))
+                                        : now()->toDateString(),
+                "reference_number" => $data['payment_id'],
+                "description"      => "Warranty Payment"
+            ];
+
+            $zohoClient = new Client(['timeout' => 20]);
+
+            $zohoResponse = $zohoClient->post(
+                "https://www.zohoapis.in/books/v3/customerpayments",
+                [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                        'Content-Type'  => 'application/json',
+                    ],
+                    'query' => [
+                        'organization_id' => $company->zoho_org_id
+                    ],
+                    'json' => $zohoPayload
+                ]
+            );
+
+            $zohoBody = json_decode($zohoResponse->getBody(), true);
+
+            if (!isset($zohoBody['payment'])) {
+                throw new \Exception('Zoho payment creation failed');
+            }
+
+            $payment->update([
+                'zoho_response' => json_encode($zohoBody),
+                'zoho_status'   => 1
+            ]);
+
+            event(new PaymentSuccessful($payment));
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Payment processed successfully',
+            'data' => $payment->fresh()
+        ], 200);
+
+    } catch (\Throwable $e) {
+
+        DB::rollBack();
+
+        Log::channel('payment')->critical('Payment API crashed', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        throw $e;
+    }
+}
     public function syncAllPayments(Request $request)
     {
     $validator = Validator::make($request->all(), [
