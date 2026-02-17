@@ -65,9 +65,10 @@
                     
                     <p style="margin:6px 0;">
                     
-                      <a href="https://retailer.goelectronix.co.in" style="background:#111827; color:#ffffff; padding:4px 8px; border-radius:4px; font-family:monospace;text-align:center;">
-                        Login here
-                      </span>
+                        <a href="{{ config('app.retailer_panel_url') }}" 
+                           style="background:#111827; color:#ffffff; padding:4px 8px; border-radius:4px; font-family:monospace; text-align:center; display:inline-block;">
+                            Login here
+                        </a>
                     </p>
 
                   </td>

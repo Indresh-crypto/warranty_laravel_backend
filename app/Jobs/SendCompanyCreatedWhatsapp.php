@@ -39,7 +39,7 @@ class SendCompanyCreatedWhatsapp implements ShouldQueue
                 'Pending verification',
                 'Support Team',
                 '90-000-000',
-                'https://retailer.goelectronix.co.in'
+                config('app.retailer_panel_url')
             ];
     
             Log::info('Company WhatsApp sending', [

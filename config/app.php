@@ -28,6 +28,7 @@ return [
 
     'env' => env('APP_ENV', 'production'),
 
+    'retailer_panel_url' => env('RETAILER_PANEL_URL'),
     /*
     |--------------------------------------------------------------------------
     | Application Debug Mode

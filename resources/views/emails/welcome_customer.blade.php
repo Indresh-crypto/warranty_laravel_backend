@@ -63,7 +63,7 @@ We're excited to have you on board.
 
 
 <a style="margin:6px 0 0; font-size:16px; font-weight:700;
-          letter-spacing:1px; color:#0d47a1;" href="https://customerwarranty.goelectronix.co.in">
+          letter-spacing:1px; color:#0d47a1;" href="https://customerwarranty.goelectronix.com">
 Login Link
 </a>
 

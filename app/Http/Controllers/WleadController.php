@@ -63,6 +63,28 @@ public function store(Request $request)
     // Plain password (for email)
   
     $plainPassword = random_int(100000, 999999);
+    
+    
+    $ownerFullName = trim($request->owner_name ?? '');
+
+    $ownerFirstName  = null;
+    $ownerMiddleName = null;
+    $ownerLastName   = null;
+    
+    if (!empty($ownerFullName)) {
+        // Remove extra spaces and split
+        $parts = preg_split('/\s+/', $ownerFullName);
+    
+        $ownerFirstName = $parts[0] ?? null;
+    
+        if (count($parts) == 2) {
+            $ownerLastName = $parts[1];
+        } elseif (count($parts) > 2) {
+            $ownerLastName   = array_pop($parts);   // Last word
+            $ownerMiddleName = implode(' ', array_slice($parts, 1));
+        }
+    }
+
     // Create lead
     $lead = WLead::create([
         'name'            => $request->name,
@@ -78,7 +100,6 @@ public function store(Request $request)
         'password'        => Hash::make($plainPassword), 
         'created_by_id'   => $request->created_by_id,
         'created_by_name' => $request->created_by_name,
-        'owner_name'      => $request->owner_name,
         'lead_type'       => $request->lead_type,
         'package_id'      => $request->package_id,
         'package_name'    => $request->package_name,
@@ -94,7 +115,14 @@ public function store(Request $request)
         'formdata'        => $request->formdata,
         'form_ref'        => $request->form_ref,
         'pay_now'        =>  $request->pay_now,
-        'pay_later'      =>  $request->pay_later
+        'pay_later'      =>  $request->pay_later,
+        'logo'           =>  $request->logo,
+        'domain'           => $request->domain,
+        'title'           =>  $request->title,
+        'owner_name'        => $ownerFullName,
+        'owner_first_name'  => $ownerFirstName,
+        'owner_middle_name' => $ownerMiddleName,
+        'owner_last_name'   => $ownerLastName
         
     ]);
 
@@ -165,13 +193,14 @@ public function update(Request $request, $id)
     */
 
     $allowedFields = [
-        'name','phone','email','state','district','pincode',
+        'name', 'owner_name', 'phone','email','state','district','pincode',
         'address1','address2','status','lead_amount',
         'created_by_id','created_by_name','owner_name','lead_type',
         'package_id','package_name','badge_name','badge_id',
         'benefits','eligibility','company_id','manager_id',
         'agent_id','formdata','form_ref','pay_now','pay_later',
-        'updated_by_id','updated_by_name'
+        'updated_by_id','updated_by_name', 'logo', 'domain', 'title', 'owner_first_name',
+        'owner_middle_name','owner_last_name'
     ];
 
     $updateData = [];
@@ -527,6 +556,12 @@ public function update(Request $request, $id)
                 'senior_id' => $lead->agent_id,
                 'agent_code' => $agent->company_code ?? "",
                 'pay_now' => $lead->pay_now,
+                'logo'=>$lead->logo,
+                'domain'=>$lead->domain,
+                'title'=>$lead->title,
+                'owner_first_name' => $lead->owner_first_name,
+                'owner_middle_name' => $lead->owner_middle_name,
+                'owner_last_name' => $lead->owner_last_name
             ];
 
             $user = Company::create($companyData);
@@ -538,8 +573,10 @@ public function update(Request $request, $id)
             ]);
 
 
-            $signinUrl = "https://retailer.goelectronix.com/signin?email=" . urlencode($lead->email);
-
+            $signinUrl = rtrim(config('app.retailer_panel_url'), '/') 
+            . '/signin?email=' 
+            . urlencode($lead->email);
+            
             Mail::to($lead->email)
                 ->send(new LeadCreateMail($lead, $signinUrl, $plainPassword));
 
@@ -587,8 +624,10 @@ public function update(Request $request, $id)
             'otp' => $otp
         ]);
     
-        $signinUrl = "https://goelectronix.com/signin?email=" . urlencode($company->contact_email);
-    
+        $signinUrl = rtrim(config('app.retailer_panel_url'), '/') 
+            . '/signin?email=' 
+            . urlencode($company->contact_email);
+            
         // Send Email with OTP
         Mail::to($company->contact_email)->send(new WelcomeCompanyMail($company, $signinUrl));
     

@@ -97,17 +97,20 @@ class CommonUpdateController extends Controller
         
         /* ================= Status update ================= */
        
-        if ((int) $request->is_verified === 7) {
+      if ((int) $request->is_verified === 7) {
 
-                // Fetch lead safely
-                $lead = WLead::where('email', $request->contact_email)->first();
-            
-                if ($lead && !empty($lead->email)) {
-                    Mail::to($lead->email)->queue(
-                        new LeadWonMail($lead)
-                    );
-                }
+            $lead = WLead::where('email', $request->contact_email)->first();
+        
+            if (!$lead) {
+                return;
             }
+        
+            $lead->update(['status' => 'won']);
+        
+            if ($lead->email) {
+                Mail::to($lead->email)->queue(new LeadWonMail($lead));
+            }
+        }
 
         
         /* ================= Apply update ================= */

@@ -1,6 +1,6 @@
 <IfModule mod_headers.c>
     <FilesMatch "\.(pdf|doc|docx|xls|xlsx|zip)$">
-        Header set Access-Control-Allow-Origin "https://warrantynew.goelectronix.co.in"
+        Header set Access-Control-Allow-Origin "https://retailer.goelectronix.com"
         Header set Access-Control-Allow-Methods "GET, OPTIONS"
         Header set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization"
     </FilesMatch>
