@@ -29,4 +29,10 @@ class DeviceModel extends Model
     {
         return $this->belongsTo(Category::class);
     }
+    
+    public function priceTemplates()
+    {
+        return $this->hasMany(PriceTemplate::class, 'device_model_id');
+    }
+
 }

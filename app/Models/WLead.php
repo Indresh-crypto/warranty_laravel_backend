@@ -4,7 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class WLead extends Model   // <-- FIXED casing
+class WLead extends Model  
 {
     protected $table = 'w_leads';
 
@@ -42,13 +42,7 @@ class WLead extends Model   // <-- FIXED casing
         'form_ref',
         'agent_id',
         'pay_now',
-        'pay_later',
-        'logo',
-        'domain',
-        'title',
-        'owner_first_name',
-        'owner_last_name',
-        'owner_middle_name'
+        'pay_later'
         
     ];
 }

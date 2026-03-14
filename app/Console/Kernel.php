@@ -15,6 +15,10 @@ class Kernel extends ConsoleKernel
         ->twiceMonthly(1, 16)
         ->withoutOverlapping()
         ->runInBackground();
+        
+        
+        $schedule->command('email:inactive-retailers')
+             ->dailyAt('23:00');
     }
 
     protected function commands(): void

@@ -21,7 +21,7 @@ class WarrantyPaymentFlowController extends Controller
 
     public function processWarrantyPayment(Request $request)
     {
-    // ✅ Validate required fields (add more if needed)
+    // Validate required fields (add more if needed)
     $request->validate([
         'payment_id' => 'required',
         'imei1' => 'required',
@@ -32,7 +32,7 @@ class WarrantyPaymentFlowController extends Controller
         'amount' => 'required|numeric'
     ]);
 
-    // ✅ Log callback
+    // Log callback
     WarrantyFlowLog::create([
         'payment_id' => $request->payment_id,
         'step' => 'CALLBACK_RECEIVED',
@@ -40,7 +40,7 @@ class WarrantyPaymentFlowController extends Controller
         'request_data' => json_encode($request->all())
     ]);
 
-    // ✅ Send ALL required device fields to Job
+    // Send ALL required device fields to Job
     $payload = $request->only([
 
         // Payment
@@ -99,7 +99,6 @@ class WarrantyPaymentFlowController extends Controller
         'zoho_product_id'
     ]);
 
-    // ✅ Dispatch Queue Job
     WarrantyPaymentFlowJob::dispatch($payload);
 
     return response()->json([
@@ -108,114 +107,6 @@ class WarrantyPaymentFlowController extends Controller
     ]);
 }
 
-/*
-    public function createWarrantyInvoice($device,$company_id,$retailer_id,$product_id,$payment_id,$amount) 
-    {
-        try {
-    
-            // ==========================
-            // SELLER COMPANY (ZOHO ORG)
-            // ==========================
-    
-            $company = Company::find($company_id);
-    
-            if (!$company) {
-                throw new \Exception('Company not found');
-            }
-    
-            if (!$company->zoho_access_token || !$company->zoho_org_id) {
-                throw new \Exception('Company Zoho credentials missing');
-            }
-    
-            // ==========================
-            // RETAILER (ZOHO CUSTOMER)
-            // ==========================
-    
-            $retailer = Company::find($retailer_id);
-    
-            if (!$retailer || !$retailer->zoho_id) {
-                throw new \Exception('Retailer Zoho contact id missing');
-            }
-    
-            // ==========================
-            // PRODUCT ITEM MAPPING
-            // ==========================
-    
-            $companyProduct = CompanyProduct::where('company_id', $company_id)
-                ->where('product_id', $product_id)
-                ->first();
-    
-            if (!$companyProduct || !$companyProduct->zoho_item_id) {
-                throw new \Exception('Zoho item id missing for company product mapping');
-            }
-    
-            // ==========================
-            // BUILD INVOICE
-            // ==========================
-    
-            $payload = [
-    
-                // CUSTOMER = RETAILER
-                'customer_id' => $retailer->zoho_id,
-    
-                'reference_number' => 'WTY-' . $device->id . '-' . $payment_id,
-    
-                'date' => now()->toDateString(),
-    
-                'line_items' => [
-                    [
-                        'item_id' => $companyProduct->zoho_item_id,
-    
-                        'name' => $device->product_name ?? 'Warranty Activation',
-    
-                        'rate' => $device->product_price > 0
-                            ? $device->product_price
-                            : $amount,
-    
-                        'quantity' => 1
-                    ]
-                ]
-            ];
-    
-            // ==========================
-            // SEND TO ZOHO
-            // ==========================
-    
-            $client = new \GuzzleHttp\Client();
-    
-            $response = $client->post(
-                'https://www.zohoapis.in/books/v3/invoices',
-                [
-                    'headers' => [
-                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token
-                    ],
-                    'query' => [
-                        'organization_id' => $company->zoho_org_id
-                    ],
-                    'json' => $payload
-                ]
-            );
-    
-            $body = json_decode($response->getBody(), true);
-    
-            if (empty($body['invoice'])) {
-                throw new \Exception(json_encode($body));
-            }
-    
-            return [
-                'success' => true,
-                'invoice' => $body['invoice']
-            ];
-    
-        } catch (\Exception $e) {
-    
-            return [
-                'success' => false,
-                'message' => $e->getMessage()
-            ];
-        }
-    }
-*/
       public function createWarrantyInvoice(
         $device,
         $company_id,
@@ -281,7 +172,7 @@ class WarrantyPaymentFlowController extends Controller
     
                         'name' => $device->product_name ?? 'Warranty Activation',
     
-                        // 👇 NOW FULL DETAILS INSIDE LINE ITEM
+                        //  NOW FULL DETAILS INSIDE LINE ITEM
                         'description' => $customerDetails,
     
                         'rate' => $device->product_price > 0
@@ -599,4 +490,66 @@ public function updateZohoInvoice($company_id, $invoiceId, $lineItems)
     return json_decode($response->getBody(), true);
 }
 
+    
+    public function registerWarrantyWithAutoCredit(Request $request)
+    {
+        $request->validate([
+    
+            // Device identifiers
+            'imei1'            => 'required|string',
+            'imei2'            => 'nullable|string',
+            'serial'           => 'nullable|string',
+    
+            // Product mapping
+            'brand_id'         => 'required|integer',
+            'category_id'      => 'required|integer',
+            'product_id'       => 'required|integer',
+            'model_id'         => 'required|integer',
+    
+            // Names
+            'product_name'     => 'required|string',
+            'brand_name'       => 'required|string',
+            'category_name'    => 'required|string',
+            'model'            => 'required|string',
+    
+            // Warranty config
+            'available_claim'  => 'required|integer',
+            'expiry_date'      => 'required|date',
+    
+            // Relations
+            'w_customer_id'    => 'required|integer',
+            'retailer_id'      => 'required|integer',
+            'company_id'       => 'required|integer',
+            'agent_id'         => 'nullable|integer',
+            'created_by'       => 'nullable|integer',
+    
+            // Files
+            'document_url'     => 'nullable|string',
+            'link1'            => 'nullable|string',
+            'link2'            => 'nullable|string',
+    
+            // Pricing
+            'device_price'     => 'required|numeric|min:0',
+            'product_price'    => 'required|numeric|min:0',
+            'product_mrp'      => 'required|numeric|min:0',
+    
+            // Payouts
+            'retailer_payout'  => 'required|numeric|min:0',
+            'employee_payout'  => 'required|numeric|min:0',
+            'other_payout'     => 'required|numeric|min:0',
+            'company_payout'   => 'required|numeric|min:0',
+    
+            // Pay later
+            'is_pay_later'     => 'required|boolean',
+        ]);
+    
+        $payload = $request->all();
+    
+        \App\Jobs\WarrantyCreditFlowJob::dispatch($payload);
+    
+        return response()->json([
+            'status'  => true,
+            'message' => 'Warranty registration with credit processing started'
+        ]);
+    }
 }

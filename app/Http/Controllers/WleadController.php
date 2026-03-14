@@ -3,6 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\WLead;
+
+use App\Models\CompanyEmployee;
+
 use App\Models\IndiaPincode;
 
 use App\Models\Company;
@@ -12,6 +15,8 @@ use Illuminate\Support\Facades\Validator;
 
 use App\Mail\WelcomeCompanyMail;
 use App\Mail\LeadCreateMail;
+use App\Mail\LeadCreateSystemMail;
+
 
 use Illuminate\Support\Facades\Mail;
 
@@ -20,217 +25,37 @@ use App\Jobs\SendAgentPendingWhatsapp;
 use DB;
 class WleadController extends Controller
 {
-    /**
-     * Store a new lead/user
-     */
-public function store(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'name'        => 'required|string|max:255',
-        'phone'       => 'required|string|max:20|unique:w_leads,phone',
-        'email'       => 'required|email|unique:w_leads,email',
-        'password'    => 'nullable',
-        'created_by_id' => 'required',
-        'created_by_name' => 'required',
-        'owner_name'    => 'required',
-        'lead_type'     => 'required',
-        'manager_id'     => 'nullable',
-        'agent_id'     => 'nullable',
-        'pincode'       => 'required|digits:6'
-    ]);
+        /**
+         * Store a new lead/user
+         */
+    public function store(Request $request)
+    {
+    DB::beginTransaction();
 
-    if ($validator->fails()) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'Validation error',
-            'errors'  => $validator->errors()
-        ], 422);
-    }
+    try {
 
-    // Fetch state & district codes
-    $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
+        $validator = Validator::make($request->all(), [
+            'name'            => 'required|string|max:255',
+            'phone'           => 'required|string|max:20|unique:w_leads,phone',
+            'email'           => 'required|email|unique:w_leads,email',
+            'created_by_id'   => 'required',
+            'created_by_name' => 'required',
+            'owner_name'      => 'required',
+            'lead_type'       => 'required',
+            'manager_id'      => 'nullable',
+            'agent_id'        => 'nullable',
+            'pincode'         => 'required|digits:6'
+        ]);
 
-    if (!$pincodeData) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Invalid Pincode'
-        ], 422);
-    }
-
-    $stateIn    = $pincodeData->state_in;
-    $districtIn = $pincodeData->district_in;
-
-    // Plain password (for email)
-  
-    $plainPassword = random_int(100000, 999999);
-    
-    
-    $ownerFullName = trim($request->owner_name ?? '');
-
-    $ownerFirstName  = null;
-    $ownerMiddleName = null;
-    $ownerLastName   = null;
-    
-    if (!empty($ownerFullName)) {
-        // Remove extra spaces and split
-        $parts = preg_split('/\s+/', $ownerFullName);
-    
-        $ownerFirstName = $parts[0] ?? null;
-    
-        if (count($parts) == 2) {
-            $ownerLastName = $parts[1];
-        } elseif (count($parts) > 2) {
-            $ownerLastName   = array_pop($parts);   // Last word
-            $ownerMiddleName = implode(' ', array_slice($parts, 1));
+        if ($validator->fails()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Validation error',
+                'errors'  => $validator->errors()
+            ], 422);
         }
-    }
 
-    // Create lead
-    $lead = WLead::create([
-        'name'            => $request->name,
-        'phone'           => $request->phone,
-        'state'           => $request->state,
-        'district'        => $request->district,
-        'pincode'         => $request->pincode,
-        'email'           => $request->email,
-        'address1'        => $request->address1,
-        'address2'        => $request->address2,
-        'status'          => $request->status ?? 1,
-        'lead_amount'     => $request->lead_amount,
-        'password'        => Hash::make($plainPassword), 
-        'created_by_id'   => $request->created_by_id,
-        'created_by_name' => $request->created_by_name,
-        'lead_type'       => $request->lead_type,
-        'package_id'      => $request->package_id,
-        'package_name'    => $request->package_name,
-        'badge_name'      => $request->badge_name,
-        'badge_id'        => $request->badge_id,
-        'benefits'        => $request->benefits,
-        'eligibility'     => $request->eligibility,
-        'company_id'      => $request->company_id,
-        'manager_id'      => $request->manager_id,
-        'agent_id'        => $request->agent_id,
-        'state_in'        => $stateIn,
-        'district_in'     => $districtIn,
-        'formdata'        => $request->formdata,
-        'form_ref'        => $request->form_ref,
-        'pay_now'        =>  $request->pay_now,
-        'pay_later'      =>  $request->pay_later,
-        'logo'           =>  $request->logo,
-        'domain'           => $request->domain,
-        'title'           =>  $request->title,
-        'owner_name'        => $ownerFullName,
-        'owner_first_name'  => $ownerFirstName,
-        'owner_middle_name' => $ownerMiddleName,
-        'owner_last_name'   => $ownerLastName
-        
-    ]);
-
-    // Generate lead_code
-    $leadCode = "{$stateIn}-{$districtIn}-{$request->pincode}-{$lead->id}";
-
-    $lead->update([
-        'lead_code' => $leadCode
-    ]);
-
-    return response()->json([
-        'status'  => true,
-        'message' => 'User lead created successfully and email sent.',
-        'data'    => $lead
-    ], 201);
-}
-
-
-public function update(Request $request, $id)
-{
-    $lead = WLead::find($id);
-
-    if (!$lead) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Lead not found'
-        ], 404);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Dynamic Validation Rules
-    |--------------------------------------------------------------------------
-    */
-
-    $rules = [];
-
-    if ($request->filled('name')) {
-        $rules['name'] = 'string|max:255';
-    }
-
-    if ($request->filled('phone')) {
-        $rules['phone'] = 'string|max:20|unique:w_leads,phone,' . $id;
-    }
-
-    if ($request->filled('email')) {
-        $rules['email'] = 'email|unique:w_leads,email,' . $id;
-    }
-
-    if ($request->filled('pincode')) {
-        $rules['pincode'] = 'digits:6';
-    }
-
-    $validator = Validator::make($request->all(), $rules);
-
-    if ($validator->fails()) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'Validation error',
-            'errors'  => $validator->errors()
-        ], 422);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Allowed Fields
-    |--------------------------------------------------------------------------
-    */
-
-    $allowedFields = [
-        'name', 'owner_name', 'phone','email','state','district','pincode',
-        'address1','address2','status','lead_amount',
-        'created_by_id','created_by_name','owner_name','lead_type',
-        'package_id','package_name','badge_name','badge_id',
-        'benefits','eligibility','company_id','manager_id',
-        'agent_id','formdata','form_ref','pay_now','pay_later',
-        'updated_by_id','updated_by_name', 'logo', 'domain', 'title', 'owner_first_name',
-        'owner_middle_name','owner_last_name'
-    ];
-
-    $updateData = [];
-
-    foreach ($allowedFields as $field) {
-
-        // ✅ Only update if value is NOT null
-        if ($request->has($field) && !is_null($request->$field)) {
-            $updateData[$field] = $request->$field;
-        }
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Password Handling
-    |--------------------------------------------------------------------------
-    */
-
-    if ($request->filled('password')) {
-        $updateData['password'] = Hash::make($request->password);
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Pincode Handling
-    |--------------------------------------------------------------------------
-    */
-
-    if ($request->filled('pincode')) {
-
+        // 🔹 Validate pincode
         $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
 
         if (!$pincodeData) {
@@ -240,43 +65,234 @@ public function update(Request $request, $id)
             ], 422);
         }
 
-        $updateData['state_in']    = $pincodeData->state_in;
-        $updateData['district_in'] = $pincodeData->district_in;
+        $stateIn    = $pincodeData->state_in;
+        $districtIn = $pincodeData->district_in;
 
-        $updateData['lead_code'] =
-            $pincodeData->state_in . '-' .
-            $pincodeData->district_in . '-' .
-            $request->pincode . '-' .
-            $lead->id;
-    }
+        // 🔹 Generate Random Password
+        $plainPassword = random_int(100000, 999999);
 
-    /*
-    |--------------------------------------------------------------------------
-    | If Nothing To Update
-    |--------------------------------------------------------------------------
-    */
+        // 🔹 Split Owner Name
+        $ownerFullName = trim($request->owner_name ?? '');
+        $parts = preg_split('/\s+/', $ownerFullName);
 
-    if (empty($updateData)) {
+        $ownerFirstName  = $parts[0] ?? null;
+        $ownerMiddleName = null;
+        $ownerLastName   = null;
+
+        if (count($parts) == 2) {
+            $ownerLastName = $parts[1];
+        } elseif (count($parts) > 2) {
+            $ownerLastName   = array_pop($parts);
+            $ownerMiddleName = implode(' ', array_slice($parts, 1));
+        }
+
+        // 🔹 Create Lead
+        $lead = WLead::create([
+            'name'            => $request->name,
+            'phone'           => $request->phone,
+            'state'           => $request->state,
+            'district'        => $request->district,
+            'pincode'         => $request->pincode,
+            'email'           => $request->email,
+            'address1'        => $request->address1,
+            'address2'        => $request->address2,
+            'status'          => $request->status ?? 1,
+            'lead_amount'     => $request->lead_amount,
+            'password'        => Hash::make($plainPassword),
+            'created_by_id'   => $request->created_by_id,
+            'created_by_name' => $request->created_by_name,
+            'lead_type'       => $request->lead_type,
+            'package_id'      => $request->package_id,
+            'package_name'    => $request->package_name,
+            'badge_name'      => $request->badge_name,
+            'badge_id'        => $request->badge_id,
+            'benefits'        => $request->benefits,
+            'eligibility'     => $request->eligibility,
+            'company_id'      => $request->company_id,
+            'manager_id'      => $request->manager_id,
+            'agent_id'        => $request->agent_id,
+            'state_in'        => $stateIn,
+            'district_in'     => $districtIn,
+            'formdata'        => $request->formdata,
+            'form_ref'        => $request->form_ref,
+            'pay_now'         => $request->pay_now,
+            'pay_later'       => $request->pay_later,
+            'owner_name'      => $ownerFullName
+        ]);
+
+        // 🔹 Generate Lead Code
+        $leadCode = "{$stateIn}-{$districtIn}-{$request->pincode}-{$lead->id}";
+        $lead->update(['lead_code' => $leadCode]);
+
+        DB::commit();   // 🔥 COMMIT BEFORE MAIL
+
+        // 🔹 Send Mail After Commit
+            $companyEmployee = CompanyEmployee::find($request->manager_id);
+            $company = Company::find($request->company_id);
+            
+            if ($companyEmployee?->official_email) {
+                Mail::to($companyEmployee->official_email)
+                    ->cc('indresh.malviya@gmail.com')
+                    ->queue(
+                        (new LeadCreateSystemMail($lead->id, $company->id))
+                            ->afterCommit()
+                    );
+            }
+
         return response()->json([
-            'status' => false,
-            'message' => 'No valid data provided for update'
-        ], 400);
+            'status'  => true,
+            'message' => 'Lead created successfully and email sent.',
+            'data'    => $lead
+        ], 201);
+
+    } catch (\Throwable $e) {
+
+        DB::rollBack();
+
+        return response()->json([
+            'status'  => false,
+            'message' => 'Failed to create lead',
+            'error'   => $e->getMessage()
+        ], 500);
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Update Lead
-    |--------------------------------------------------------------------------
-    */
-
-    $lead->update($updateData);
-
-    return response()->json([
-        'status'  => true,
-        'message' => 'Lead updated successfully.',
-        'data'    => $lead->fresh()
-    ]);
 }
+    
+    public function update(Request $request, $id)
+    {
+        $lead = WLead::find($id);
+    
+        if (!$lead) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Lead not found'
+            ], 404);
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | Dynamic Validation Rules
+        |--------------------------------------------------------------------------
+        */
+    
+        $rules = [];
+    
+        if ($request->filled('name')) {
+            $rules['name'] = 'string|max:255';
+        }
+    
+        if ($request->filled('phone')) {
+            $rules['phone'] = 'string|max:20|unique:w_leads,phone,' . $id;
+        }
+    
+        if ($request->filled('email')) {
+            $rules['email'] = 'email|unique:w_leads,email,' . $id;
+        }
+    
+        if ($request->filled('pincode')) {
+            $rules['pincode'] = 'digits:6';
+        }
+    
+        $validator = Validator::make($request->all(), $rules);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Validation error',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | Allowed Fields
+        |--------------------------------------------------------------------------
+        */
+    
+        $allowedFields = [
+            'name', 'owner_name', 'phone','email','state','district','pincode',
+            'address1','address2','status','lead_amount',
+            'created_by_id','created_by_name','owner_name','lead_type',
+            'package_id','package_name','badge_name','badge_id',
+            'benefits','eligibility','company_id','manager_id',
+            'agent_id','formdata','form_ref','pay_now','pay_later',
+            'updated_by_id','updated_by_name', 'logo', 'domain', 'title', 'owner_first_name',
+            'owner_middle_name','owner_last_name'
+        ];
+    
+        $updateData = [];
+    
+        foreach ($allowedFields as $field) {
+    
+            // ✅ Only update if value is NOT null
+            if ($request->has($field) && !is_null($request->$field)) {
+                $updateData[$field] = $request->$field;
+            }
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | Password Handling
+        |--------------------------------------------------------------------------
+        */
+    
+        if ($request->filled('password')) {
+            $updateData['password'] = Hash::make($request->password);
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | Pincode Handling
+        |--------------------------------------------------------------------------
+        */
+    
+        if ($request->filled('pincode')) {
+    
+            $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
+    
+            if (!$pincodeData) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Invalid Pincode'
+                ], 422);
+            }
+    
+            $updateData['state_in']    = $pincodeData->state_in;
+            $updateData['district_in'] = $pincodeData->district_in;
+    
+            $updateData['lead_code'] =
+                $pincodeData->state_in . '-' .
+                $pincodeData->district_in . '-' .
+                $request->pincode . '-' .
+                $lead->id;
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | If Nothing To Update
+        |--------------------------------------------------------------------------
+        */
+    
+        if (empty($updateData)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'No valid data provided for update'
+            ], 400);
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | Update Lead
+        |--------------------------------------------------------------------------
+        */
+    
+        $lead->update($updateData);
+    
+        return response()->json([
+            'status'  => true,
+            'message' => 'Lead updated successfully.',
+            'data'    => $lead->fresh()
+        ]);
+    }
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [

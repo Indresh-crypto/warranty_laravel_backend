@@ -26,94 +26,6 @@ use GuzzleHttp\Exception\RequestException;
 class WhatsappController extends Controller
 {
 
-    public function sendWarrantyTest(Request $request)
-    {
-      
-        $request->validate([
-            'device_id' => 'required|exists:w_devices,id'
-        ]);
-
-        $device = WDevice::with('customer')->find($request->device_id);
-
-        if (!$device || !$device->customer || empty($device->customer->mobile)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Customer mobile missing'
-            ], 400);
-        }
-
-        if (empty($device->certificate_link)) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Certificate link missing'
-            ], 400);
-        }
-
-        $customer = $device->customer;
-
-        $destination = '91' . ltrim($customer->mobile, '0');
-
-        $companyDetails = Company::find($device->company_id);
-        $companyName = $companyDetails->business_name ?? 'Goelectronix';
-
-        try {
-            $client = new Client();
-
-            $response = $client->post(
-                'https://api.gupshup.io/wa/api/v1/template/msg',
-                [
-                    'headers' => [
-                        'apikey' => config('services.gupshup.key'),
-                        'Content-Type' => 'application/x-www-form-urlencoded',
-                    ],
-                    'form_params' => [
-                        'channel' => 'whatsapp',
-                        'source' => '15557661628',
-                        'destination' => '919039128100',
-                        'src.name' => 'GoelectronixWarranty',
-
-                        'template' => json_encode([
-                            'id' => '7daef5bb-b87c-41e8-a646-b179277da272',
-                            'params' => [
-                                $customer->name,
-                                $device->brand_name,
-                                $device->model,
-                                $device->imei1 ?? $device->serial,
-                                $device->product_name,
-                                $device->expiry_date,
-                                $device->category_name,
-                                "+919372011028",
-                                "hello@goelectronix.com",
-                                $companyName
-                            ],
-                        ]),
-
-                        'message' => json_encode([
-                            'type' => 'document',
-                            'document' => [
-                                'link' => $device->certificate_link,
-                                'filename' => 'Warranty_' . $device->w_code . '.pdf',
-                            ],
-                        ]),
-                    ],
-                ]
-            );
-
-            return response()->json([
-                'status' => true,
-                'message' => 'WhatsApp Sent Successfully',
-                'gupshup_response' => json_decode($response->getBody(), true)
-            ]);
-
-        } catch (\Exception $e) {
-
-            return response()->json([
-                'status' => false,
-                'message' => 'WhatsApp Failed',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
     private function optInUser($apiKey, $appName, $phone)
     {
         $response = Http::withHeaders([
@@ -165,77 +77,112 @@ class WhatsappController extends Controller
     }
    
     public function sendOtp(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'contact_phone' => 'required|digits:10',
-        'company_id'    => 'required|integer',
-    ]);
-
-    if ($validator->fails()) {
+    {
+        $validator = Validator::make($request->all(), [
+            'contact_phone'     => 'required|digits:10',
+            'old_contact_phone' => 'nullable|digits:10',
+            'company_id'        => 'required|integer',
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        $company = Company::find($request->company_id);
+    
+        if (!$company) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Company not found.'
+            ], 404);
+        }
+    
+        $newPhone = $request->contact_phone;
+        $oldPhone = $request->old_contact_phone;
+    
+        /*
+        |--------------------------------------------------------------------------
+        | PHONE UPDATE LOGIC
+        |--------------------------------------------------------------------------
+        */
+    
+        if (!empty($oldPhone)) {
+    
+            if ($company->contact_phone != $oldPhone) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Old phone number does not match our records.'
+                ], 400);
+            }
+    /*
+            if ($oldPhone == $newPhone) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'New phone number must be different from old number.'
+                ], 400);
+            }
+    */
+            // Update phone
+            $company->contact_phone = $newPhone;
+            $company->save();
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | GENERATE OTP
+        |--------------------------------------------------------------------------
+        */
+    
+        $otp = rand(100000, 999999);
+    
+        Cache::put("otp_{$newPhone}", $otp, now()->addMinutes(3));
+    
+        $destination = '91' . $newPhone;
+    
+        /*
+        |--------------------------------------------------------------------------
+        | SEND WHATSAPP OTP
+        |--------------------------------------------------------------------------
+        */
+    
+        $apiKey  = config('services.gupshup.key');
+        $source  = '15557661628';
+        $appName = 'GoelectronixWarranty';
+    
+        $template = json_encode([
+            'id'     => '20d82dbd-0fcb-46b4-a574-9b69719ce49a',
+            'params' => [$otp],
+        ]);
+    
+        $response = Http::asForm()
+            ->withHeaders(['apikey' => $apiKey])
+            ->post('https://api.gupshup.io/wa/api/v1/template/msg', [
+                'channel'     => 'whatsapp',
+                'source'      => $source,
+                'destination' => $destination,
+                'src.name'    => $appName,
+                'template'    => $template,
+            ]);
+    
+        if ($response->successful()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'OTP sent successfully.',
+                'phone_updated' => !empty($oldPhone),
+                'otp' => $otp // remove in production
+            ]);
+        }
+    
         return response()->json([
             'success' => false,
-            'message' => $validator->errors()->first(),
-            'errors'  => $validator->errors()
-        ], 422);
+            'message' => 'Failed to send OTP.',
+            'error' => $response->json(),
+        ], 500);
     }
-
-    $user = Company::where('contact_phone', $request->contact_phone)
-        ->where('id', $request->company_id)
-        ->first();
-
-    if (!$user) {
-        return response()->json([
-            'success' => false,
-            'message' => 'User not found. You need to sign up first.',
-            'user_exists' => false,
-        ], 404);
-    }
-
-    // 🔐 Generate OTP
-    $otp = rand(100000, 999999);
-    $phone = $request->contact_phone;
-
-    Cache::put("otp_{$phone}", $otp, now()->addMinutes(3));
-
-    $destination = '91' . $phone;
-
-    // ✅ Gupshup values
-    $apiKey  = config('services.gupshup.key');
-    $source  = '15557661628';
-    $appName = 'GoelectronixWarranty';
-
-    // Template payload
-    $template = json_encode([
-        'id'     => '20d82dbd-0fcb-46b4-a574-9b69719ce49a',
-        'params' => [$otp],
-    ]);
-
-    $response = Http::asForm()
-        ->withHeaders(['apikey' => $apiKey])
-        ->post('https://api.gupshup.io/wa/api/v1/template/msg', [
-            'channel'     => 'whatsapp',
-            'source'      => $source,
-            'destination' => $destination,
-            'src.name'    => $appName,
-            'template'    => $template,
-        ]);
-
-    if ($response->successful()) {
-        return response()->json([
-            'success' => true,
-            'message' => 'OTP sent successfully.',
-            'user_exists' => true,
-            'otp' => $otp, // ❌ REMOVE IN PRODUCTION
-        ]);
-    }
-
-    return response()->json([
-        'success' => false,
-        'message' => 'Failed to send OTP.',
-        'error' => $response->json(),
-    ], 500);
-}
-
 
     public function verifyOtp(Request $request)
     {
@@ -317,5 +264,94 @@ class WhatsappController extends Controller
         ];
     }
 }
+
+    public function sendWarrantyTest(Request $request)
+    {
+      
+        $request->validate([
+            'device_id' => 'required|exists:w_devices,id'
+        ]);
+
+        $device = WDevice::with('customer')->find($request->device_id);
+
+        if (!$device || !$device->customer || empty($device->customer->mobile)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Customer mobile missing'
+            ], 400);
+        }
+
+        if (empty($device->certificate_link)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Certificate link missing'
+            ], 400);
+        }
+
+        $customer = $device->customer;
+
+        $destination = '91' . ltrim($customer->mobile, '0');
+
+        $companyDetails = Company::find($device->company_id);
+        $companyName = $companyDetails->business_name ?? 'Goelectronix';
+
+        try {
+            $client = new Client();
+
+            $response = $client->post(
+                'https://api.gupshup.io/wa/api/v1/template/msg',
+                [
+                    'headers' => [
+                        'apikey' => config('services.gupshup.key'),
+                        'Content-Type' => 'application/x-www-form-urlencoded',
+                    ],
+                    'form_params' => [
+                        'channel' => 'whatsapp',
+                        'source' => '15557661628',
+                        'destination' => $destination,
+                        'src.name' => 'GoelectronixWarranty',
+
+                        'template' => json_encode([
+                            'id' => '7daef5bb-b87c-41e8-a646-b179277da272',
+                            'params' => [
+                                $customer->name,
+                                $device->brand_name,
+                                $device->model,
+                                $device->imei1 ?? $device->serial,
+                                $device->product_name,
+                                $device->expiry_date,
+                                $device->category_name,
+                                "+919372011028",
+                                "hello@goelectronix.com",
+                                $companyName
+                            ],
+                        ]),
+
+                        'message' => json_encode([
+                            'type' => 'document',
+                            'document' => [
+                                'link' => $device->certificate_link,
+                                'filename' => 'Warranty_' . $device->w_code . '.pdf',
+                            ],
+                        ]),
+                    ],
+                ]
+            );
+
+            return response()->json([
+                'status' => true,
+                'message' => 'WhatsApp Sent Successfully',
+                'gupshup_response' => json_decode($response->getBody(), true)
+            ]);
+
+        } catch (\Exception $e) {
+
+            return response()->json([
+                'status' => false,
+                'message' => 'WhatsApp Failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
 }
 

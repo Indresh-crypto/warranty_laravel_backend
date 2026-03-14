@@ -209,6 +209,19 @@ class RazorpayWebhookController extends Controller
 
         return response()->json(['status' => 'activation queued'], 200);
     }
+    
+    //for advance payment (wallet)
+    
+     if ($project === 'warranty' && $service === 'advance_payment') {
+    
+        \App\Jobs\AdvancePaymentJob::dispatch([
+            'company_id'  => $payment['notes']['company_id'],
+            'retailer_id' => $payment['notes']['retailer_id'],
+            'amount'      => $payment['amount'] / 100
+        ]);
+    
+        return response()->json(['status' => 'update advance payment queued'], 200);
+    }
 
     return response()->json(['status' => 'processed'], 200);
 }

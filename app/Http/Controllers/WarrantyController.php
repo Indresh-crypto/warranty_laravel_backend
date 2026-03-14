@@ -16,7 +16,6 @@ use App\Models\PriceTemplate;
 use App\Models\WCustomer;
 use App\Models\Companies;
 use App\Models\WDevice;
-
 use App\Models\Wclaim;
 use App\Models\ZohoInvoice;
 use Illuminate\Http\Request;
@@ -34,6 +33,11 @@ use DB;
 use App\Events\WarrantyRegistered;
 use App\Events\WarrantyRegisterWhatsapp;
 use App\Events\WarrantyRegisteredProvision;
+
+use App\Services\WarrantyPricingService;
+
+use App\Models\DeviceModel;
+use Illuminate\Validation\Rule;
 
 use PhpOffice\PhpWord\TemplateProcessor;
 
@@ -74,60 +78,57 @@ class WarrantyController extends Controller
         ]);
     }
 
-    
-   
    public function getMatchingPriceTemplates(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'company_id'     => 'required|integer|exists:companies,id',
-        'category_id'    => 'required|integer|exists:category,id', // ✅ table name 'category'
-        'product_price'  => 'required|numeric|min:0',
-    ]);
-
-    if ($validator->fails()) {
+   {
+        $validator = Validator::make($request->all(), [
+            'company_id'     => 'required|integer|exists:companies,id',
+            'category_id'    => 'required|integer|exists:category,id',
+            'product_price'  => 'required|numeric|min:0',
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Validation failed',
+                'errors'  => $validator->errors(),
+            ], 422);
+        }
+    
+        // ✅ Step 1: Get all product IDs linked to this category
+        $productIds = WarrantyProduct::whereHas('categories', function ($query) use ($request) {
+            $query->where('category.id', $request->category_id); 
+        })->pluck('id');
+    
+        if ($productIds->isEmpty()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'No products found under the given category',
+                'data'    => [],
+            ], 404);
+        }
+    
+        // ✅ Step 2: Find matching templates
+        $matchingTemplates = PriceTemplate::with('warrantyProduct.categories')
+            ->where('company_id', $request->company_id)
+            ->whereIn('warranty_product_id', $productIds)
+            ->where('min_price', '<=', $request->product_price)
+            ->where('max_price', '>=', $request->product_price)
+            ->get();
+    
+        if ($matchingTemplates->isEmpty()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'No matching price templates found',
+                'data'    => [],
+            ], 404);
+        }
+    
         return response()->json([
-            'status'  => false,
-            'message' => 'Validation failed',
-            'errors'  => $validator->errors(),
-        ], 422);
+            'status'  => true,
+            'message' => 'Matching price templates retrieved successfully',
+            'data'    => $matchingTemplates,
+        ], 200);
     }
-
-    // ✅ Step 1: Get all product IDs linked to this category
-    $productIds = WarrantyProduct::whereHas('categories', function ($query) use ($request) {
-        $query->where('category.id', $request->category_id); // ✅ use 'category.id'
-    })->pluck('id');
-
-    if ($productIds->isEmpty()) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'No products found under the given category',
-            'data'    => [],
-        ], 404);
-    }
-
-    // ✅ Step 2: Find matching templates
-    $matchingTemplates = PriceTemplate::with('warrantyProduct.categories')
-        ->where('company_id', $request->company_id)
-        ->whereIn('warranty_product_id', $productIds)
-        ->where('min_price', '<=', $request->product_price)
-        ->where('max_price', '>=', $request->product_price)
-        ->get();
-
-    if ($matchingTemplates->isEmpty()) {
-        return response()->json([
-            'status'  => false,
-            'message' => 'No matching price templates found',
-            'data'    => [],
-        ], 404);
-    }
-
-    return response()->json([
-        'status'  => true,
-        'message' => 'Matching price templates retrieved successfully',
-        'data'    => $matchingTemplates,
-    ], 200);
-}
-
 
     public function getProductsWithCategories()
     {
@@ -140,7 +141,7 @@ class WarrantyController extends Controller
     }
 
   public function addPriceTemplate(Request $request)
-{
+  {
     $validator = Validator::make($request->all(), [
         'warranty_product_id' => 'required|exists:w_products,id',
         'emp_payout'          => 'required|numeric|min:0',
@@ -232,119 +233,128 @@ class WarrantyController extends Controller
     ], 201);
 }
   
-  
 
+public function createWarrantyInvoice(WDevice $device, WCustomer $customer, $company_id, $zoho_product_id)
+{
+    try {
 
-    public function createWarrantyInvoice(WDevice $device, WCustomer $customer, $company_id, $zoho_product_id)
-    {
-        try {
-            $orgUser = Company::find($company_id);
-            if (!$orgUser) {
-                return [
-                    'success' => false,
-                    'message' => 'Organization user not found.',
-                ];
-            }
-
-            $accessToken = $orgUser->zoho_access_token;
-            $orgId = $orgUser->zoho_org_id;
-
-            $retailer = Company::find($customer->retailer_id);
-            if (!$retailer || !$retailer->zoho_contact_id) {
-                return [
-                    'success' => false,
-                    'message' => 'Retailer or Zoho customer ID not found.',
-                ];
-            }
-
-            $invoicePayload = [
-                'customer_id' => $retailer->zoho_contact_id,
-                'reference_number' => "WTY" . $device->id,
-                'notes' => $customer->name .
-                    ' | Mobile: ' . $customer->mobile .
-                    ' | IMEI: ' . $device->imei1 .
-                    ' | Device Price: ₹' . number_format($device->device_price, 2) .
-                    ' | WTY ID: ' . $device->id .
-                    ' | Retailer Payout: ₹' . number_format($device->retailer_payout, 2) .
-                    ' | Employee Payout: ₹' . number_format($device->employee_payout, 2),
-                'date' => now()->toDateString(),
-                'due_date' => now()->addDays(7)->toDateString(),
-                'payment_terms_label' => "You need to clear the invoice within 7 days.",
-                'line_items' => [
-                    [
-                        'item_id' => $zoho_product_id,
-                        'name' => $device->product_name,
-                        'rate' => $device->product_price,
-                        'quantity' => 1,
-                        'description' => $device->brand_name . ' | ' .
-                            $device->model . ' | Device Price: ₹' . number_format($device->device_price, 2) .
-                            ' | ' . $device->imei1,
-                    ],
-                ],
-            
+        $orgUser = Company::find($company_id);
+        if (!$orgUser) {
+            return [
+                'success' => false,
+                'message' => 'Organization user not found.',
             ];
+        }
 
-            $client = new \GuzzleHttp\Client();
-            $response = $client->post('https://www.zohoapis.in/books/v3/invoices', [
-                'headers' => [
-                    'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
-                    'Content-Type' => 'application/json',
+        $accessToken = $orgUser->zoho_access_token;
+        $orgId = $orgUser->zoho_org_id;
+
+        $retailer = Company::find($device->retailer_id);
+
+        if (!$retailer || !$retailer->zoho_id) {
+            return [
+                'success' => false,
+                'message' => 'Retailer or Zoho customer ID not found.',
+            ];
+        }
+
+        $invoicePayload = [
+            'customer_id' => $retailer->zoho_id,
+            'reference_number' => "WTY" . $device->id,
+            'is_inclusive_tax' => true,
+            'notes' => $customer->name .
+                ' | Mobile: ' . $customer->mobile .
+                ' | IMEI: ' . $device->imei1 .
+                ' | Device Price: ₹' . number_format($device->device_price, 2) .
+                ' | WTY ID: ' . $device->id .
+                ' | Retailer Payout: ₹' . number_format($device->retailer_payout, 2) .
+                ' | Employee Payout: ₹' . number_format($device->employee_payout, 2),
+            'date' => now()->toDateString(),
+            'due_date' => now()->addDays(7)->toDateString(),
+            'payment_terms_label' => "You need to clear the invoice within 7 days.",
+            'line_items' => [
+                [
+                    'item_id' => $zoho_product_id,
+                    'name' => $device->product_name,
+                    'rate' => $device->product_price,
+                    'quantity' => 1,
+                    'description' => $device->brand_name . ' | ' .
+                        $device->model . ' | Device Price: ₹' . number_format($device->device_price, 2) .
+                        ' | ' . $device->imei1,
                 ],
-                'query' => [
-                    'organization_id' => $orgId,
-                ],
-                'json' => $invoicePayload,
-            ]);
+            ],
+        ];
 
-            $responseBody = json_decode($response->getBody(), true);
+        $client = new \GuzzleHttp\Client();
 
-            if (isset($responseBody['invoice'])) {
-                $invoice = $responseBody['invoice'];
+        $response = $client->post('https://www.zohoapis.in/books/v3/invoices', [
+            'headers' => [
+                'Authorization' => 'Zoho-oauthtoken ' . $accessToken,
+                'Content-Type' => 'application/json',
+            ],
+            'query' => [
+                'organization_id' => $orgId,
+            ],
+            'json' => $invoicePayload,
+        ]);
 
-               ZohoInvoice::create([
-                    'invoice_id'       => $responseBody['invoice']['invoice_id'],
-                    'contact_id'       => $customer->retailer_id,
-                    'org_id'           => $orgId,
-                    'company_id'       => $company_id,
-                    'user_id'          => $customer->retailer_id,
-                    'role'             => 'sales',
-                    'zoho_json'        => json_encode($responseBody['invoice']),
-                    'created_by_id'    => $customer->retailer_id,
-                    'created_by_name'  => $customer->name,
-                  //  'invoice_status'   => $responseBody['invoice']['status'] ?? 'sent',
-                    'invoice_status'   => 'paid',
-                    'due_date'         => now()->addDays(7)->toDateString(),
-                    'payment_terms_label' => "You need to clear the invoice within 7 days.",
-                    'payment_date'     => null,
-                    'invoice_amount'   => $responseBody['invoice']['total'],
-                    'balance_amount'   => $responseBody['invoice']['balance'],
-                    'product_type'     => $quotation->product_type ?? 'goods',
-                    'quotation_id'     => 0
-                    
-                ]);
+        $responseBody = json_decode($response->getBody(), true);
 
-                return [
-                    'success' => true,
-                    'message' => 'Invoice created and recorded successfully.',
-                    'invoice' => $invoice,
-                ];
-            }
-
+        if (!isset($responseBody['invoice'])) {
             return [
                 'success' => false,
                 'message' => 'Invoice data missing in Zoho response.',
                 'response' => $responseBody,
             ];
-
-        } catch (\Exception $e) {
-            return [
-                'success' => false,
-                'message' => 'Exception occurred while creating invoice.',
-                'error' => $e->getMessage(),
-            ];
         }
-    }
 
+        $invoice = $responseBody['invoice'];
+
+        ZohoInvoice::create([
+            'invoice_id' => $invoice['invoice_id'],
+            'contact_id' => $customer->retailer_id,
+            'org_id' => $orgId,
+            'company_id' => $company_id,
+            'user_id' => $customer->retailer_id,
+            'role' => 0,
+            'zoho_json' => json_encode($invoice),
+            'created_by_id' => $customer->retailer_id,
+            'created_by_name' => $customer->name,
+            'invoice_status' => 'paid',
+            'due_date' => now()->addDays(7)->toDateString(),
+            'payment_terms_label' => "You need to clear the invoice within 7 days.",
+            'payment_date' => null,
+            'invoice_amount' => $invoice['total'],
+            'balance_amount' => $invoice['balance'],
+            'product_type' => 'service',
+            'quotation_id' => 0
+        ]);
+
+        // ✅ Update device
+        $device->update([
+            'zoho_invoice_id' => $invoice['invoice_id'],
+            'invoice_id' => $invoice['invoice_number'] ?? null,
+            'invoice_status' => $invoice['status'] ?? 'paid',
+            'invoice_json' => json_encode($invoice),
+            'invoice_created_date' => now(),
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'Invoice created and recorded successfully.',
+            'invoice' => $invoice,
+        ];
+
+    } catch (\Exception $e) {
+
+                    
+        return [
+            'success' => false,
+            'message' => 'Exception occurred while creating invoice.',
+            'error' => $e->getMessage(),
+        ];
+    }
+}
 
     public function updateCustomer(Request $request, $id)
     {
@@ -362,7 +372,6 @@ class WarrantyController extends Controller
     public function createDevice(Request $request)
     {
         
-            // 🔒 Check duplicate device
            $exists = WDevice::where('product_id', $request->product_id)
             ->where(function ($query) use ($request) {
                 $query->where('imei1', $request->imei1)
@@ -376,18 +385,23 @@ class WarrantyController extends Controller
                     'message' => 'Device with the same IMEI or Serial already exists.'
                 ], 409);
             }
-            
-            $product = WarrantyProduct::findOrFail($request->product_id);
+        
+            $wproduct = WarrantyProduct::find($request->product_id);
             
             $product_mrp = 0;
             
-            if ($product->is_percent) {
-                $product_mrp = ((float)$request->product_mrp / 100)
-                             * (float)$request->device_price;
-            }else{
+            if ($wproduct && $wproduct->is_percent == 1) {
+                $product_mrp = ($request->product_mrp / 100) * $request->device_price;
+            } else {
                 $product_mrp = $request->product_mrp;
             }
-
+            
+             $pricing = WarrantyPricingService::calculate(
+                $request->product_id,
+                $request->company_id,
+                $request->device_price
+            );
+            
             $device = WDevice::create([
                 
                 'imei1' => $request->imei1,
@@ -408,10 +422,10 @@ class WarrantyController extends Controller
                 'link1' => $request->link1,
                 'link2' => $request->link2,
                 'device_price' => $request->device_price,
-                'retailer_payout' => $request->retailer_payout,
-                'employee_payout' => $request->employee_payout,
-                'other_payout' => $request->other_payout,
-                'company_payout' => $request->company_payout,
+                'retailer_payout' => $pricing['retailer_payout'],
+                'employee_payout' => $pricing['employee_payout'],
+                'other_payout'    => $pricing['other_payout'],
+                'company_payout'  => $pricing['company_payout'],
                 'company_id' => $request->company_id,
                 'product_price' => $request->product_price,
                 'product_mrp' => $product_mrp,
@@ -456,7 +470,7 @@ class WarrantyController extends Controller
                 'message' => 'Device created successfully',
                 'device' => $device
             ], 201);
-        }
+    }
 
     public function createBrand(Request $request)
     {
@@ -545,30 +559,28 @@ class WarrantyController extends Controller
     ], 200);
 }
     public function createCategory(Request $request)
-{
-
-
-    $validated = $request->validate([
+    {
+        $validated = $request->validate([
         'name' => 'required|string|max:255',
         'image' => 'nullable',
         'description' => 'nullable|string',
         'status'=>'nullable'
-    ]);
+        ]);
 
-    $brand = Category::create([
-        'name' => $validated['name'],
-        'image' => $validated['image'] ?? null,
-        'description' => $validated['description'] ?? null,
-        'status'=>$validated['status']
-    ]);
+        $brand = Category::create([
+            'name' => $validated['name'],
+            'image' => $validated['image'] ?? null,
+            'description' => $validated['description'] ?? null,
+            'status'=>$validated['status']
+        ]);
 
-    return response()->json([
-        'message' => 'Category created successfully',
-    ], 201);
-}
+     
+        return response()->json([
+            'message' => 'Category created successfully',
+        ], 201);
+    }
     
-
-
+    
    public function getCompanyProduct(Request $request)
    {
     $query = CompanyProduct::with('product.categories', 'company');
@@ -664,94 +676,99 @@ class WarrantyController extends Controller
         ], Response::HTTP_OK);
     }
 
-  public function updateProduct(Request $request, $id)
-  {
-    DB::beginTransaction();
-
-    try {
-
-        $product = WarrantyProduct::findOrFail($id);
-
-        // 1️⃣ Update product
-        $product->update([
-            'name'          => $request->name,
-            'image'         => $request->image,
-            'hsn_code'      => $request->hsn_or_sac,
-            'validity'      => $request->validity,
-            'claims'        => $request->claims,
-            'product_value' => $request->product_value,
-            'cover_value'   => $request->cover_value,
-            'features'      => $request->features,
-            'min_value'     => $request->min_value,
-            'max_value'     => $request->max_value,
-            'status'        => $request->status,
-            'coverage'      => $request->coverage, 
-            'exclustions'   => $request->exclustions,
-            'margin'        => $request->margin,
-            'mrp'           => $request->mrp,
-            'product_type'  => $request->product_type
-            
-           
-
-        ]);
-
-
-        // 2️⃣ Sync categories (existing logic)
-        if ($request->has('category_ids')) {
-            $product->categories()->sync($request->category_ids);
-        }
-
-        // 3️⃣ SYNC COVERAGES (IMPORTANT PART)
-        if (!empty($request->coverage)) {
-
-            // 🔴 Delete old coverages
-            WarrantyProductCoverage::where(
-                'warranty_product_id',
-                $product->id
-            )->delete();
-
-            // 🔵 Split coverage string
-            $coverages = array_map(
-                'trim',
-                preg_split('/[.|]/', $request->coverage)
-            );
-
-            // 🟢 Insert new coverages
-            foreach ($coverages as $coverage) {
-
-                if ($coverage === '') {
-                    continue;
-                }
-
-                WarrantyProductCoverage::create([
-                    'warranty_product_id' => $product->id,
-                    'title'               => $coverage,
-                    'description'         => null,
-                    'status'              => 1
-                ]);
+    public function updateProduct(Request $request, $id)
+    {
+        DB::beginTransaction();
+    
+        try {
+    
+            $product = WarrantyProduct::findOrFail($id);
+    
+            // ✅ Generate same product name format as createProduct
+            $productName = collect([
+                $request->plan_type,
+                $request->category_name,
+                $request->validity ? '(' . $request->validity . ' Days)' : null,
+                ($request->min_value !== null && $request->max_value !== null)
+                    ? $request->min_value . ' to ' . $request->max_value
+                    : null
+            ])->filter()->implode(' ');
+    
+            // 1️⃣ Update product
+            $product->update([
+                'name'          => $productName,
+                'image'         => $request->image,
+                'hsn_code'      => $request->hsn_or_sac,
+                'validity'      => $request->validity,
+                'claims'        => $request->claims,
+                'product_value' => $request->product_value,
+                'cover_value'   => $request->cover_value,
+                'features'      => $request->features,
+                'min_value'     => $request->min_value,
+                'max_value'     => $request->max_value,
+                'status'        => $request->status,
+                'coverage'      => $request->coverage,
+                'exclusions'    => $request->exclusions,
+                'margin'        => $request->margin,
+                'mrp'           => $request->mrp,
+                'product_type'  => $request->plan_type,
+                'is_fixed'      => $request->is_fixed ?? false,
+                'is_percent'    => $request->is_percent ?? false,
+                'is_regular'    => $request->is_regular ?? false,
+                'is_offer'      => $request->is_offer ?? false,
+                'plan_type'     => $request->plan_type
+            ]);
+    
+            // 2️⃣ Sync categories
+            if ($request->has('category_ids')) {
+                $product->categories()->sync($request->category_ids);
             }
+    
+            // 3️⃣ Sync coverages
+            if (!empty($request->coverage)) {
+    
+                WarrantyProductCoverage::where(
+                    'warranty_product_id',
+                    $product->id
+                )->delete();
+    
+                $coverages = array_map(
+                    'trim',
+                    preg_split('/[.|]/', $request->coverage)
+                );
+    
+                foreach ($coverages as $coverage) {
+    
+                    if ($coverage === '') continue;
+    
+                    WarrantyProductCoverage::create([
+                        'warranty_product_id' => $product->id,
+                        'title'               => $coverage,
+                        'description'         => null,
+                        'status'              => 1
+                    ]);
+                }
+            }
+    
+            DB::commit();
+    
+            return response()->json([
+                'status'  => true,
+                'message' => 'Product updated successfully',
+                'product' => $product->load(['categories', 'coverages'])
+            ], 200);
+    
+        } catch (\Exception $e) {
+    
+            DB::rollBack();
+    
+            return response()->json([
+                'status'  => false,
+                'message' => 'Failed to update product',
+                'error'   => $e->getMessage()
+            ], 500);
         }
-
-        DB::commit();
-
-        return response()->json([
-            'status'  => true,
-            'message' => 'Product updated successfully',
-            'product' => $product->load(['categories', 'coverages'])
-        ], 200);
-
-    } catch (\Exception $e) {
-
-        DB::rollBack();
-
-        return response()->json([
-            'status'  => false,
-            'message' => 'Failed to update product',
-            'error'   => $e->getMessage()
-        ], 500);
     }
-}
-
 
 
     public function getSoldSummery(Request $request)
@@ -796,8 +813,7 @@ class WarrantyController extends Controller
     public function createProduct(Request $request)
     {
         // Define validation rules
-        $rules = [
-            'name' => 'required|string|max:255',
+       $rules = [
             'image' => 'nullable|url',
             'category_ids' => 'nullable|array',
             'validity' => 'required|integer',
@@ -815,10 +831,20 @@ class WarrantyController extends Controller
             'is_taxable' => 'nullable|boolean',
             'company_id' => 'required|integer',
             'hsn_or_sac' => 'required|string',
-            'status'    => 'required',
-            'margin'    => 'required',
-            'coverage' => 'nullable',
-            'exclustions' => 'nullable'
+            'status' => 'required',
+            'margin' => 'required|numeric',
+            'coverage' => 'nullable|string',
+            'exclusions' => 'nullable|string',
+            'category_name' => 'nullable|string',
+        
+            'plan_type' => [
+                'required',
+                Rule::in([
+                    'Screen Damage',
+                    'Total Protection',
+                    'Extended Warranty'
+                ])
+            ],
         ];
     
         $validator = Validator::make($request->all(), $rules);
@@ -830,6 +856,16 @@ class WarrantyController extends Controller
             ], 422);
         }
     
+     
+         $productName = collect([
+                $request->plan_type,
+                $request->category_name,
+                $request->validity ? '(' . $request->validity . ' Days)' : null,
+                ($request->min_value !== null && $request->max_value !== null)
+                    ? $request->min_value . ' to ' . $request->max_value
+                    : null
+            ])->filter()->implode(' ');
+
         // Find organization user
         $orgUser = Company::where('id', $request->company_id)
                           ->whereNotNull('zoho_access_token')
@@ -841,7 +877,7 @@ class WarrantyController extends Controller
         }
     
         $itemData = [
-            "name" => $request->name,
+            "name" => $productName,
             "rate" => $request->mrp ?? 0,
             "hsn_or_sac" => $request->hsn_or_sac,
             "description" => $request->features ?? 'Item Description',
@@ -871,7 +907,7 @@ class WarrantyController extends Controller
             }
     
             $product = WarrantyProduct::create([
-                'name' => $request->name,
+                'name' => $productName,
                 'image' => $request->image ?? null,
                 'zoho_id' => $zohoItem['item_id'], 
                 'hsn_code' => $request->hsn_or_sac,
@@ -888,7 +924,8 @@ class WarrantyController extends Controller
                 'status' => $request->status,
                 'margin' => $request->margin,
                 'coverage'=> $request->coverage,
-                'exclustions' => $request->exclustions
+                'exclusions' => $request->exclusions,
+                'product_type' => $request->plan_type
             ]);
     
     
@@ -1520,7 +1557,6 @@ public function dashboardCounts(Request $request)
             "hsn_or_sac"   => $product->hsn_code,
             "product_type" => "service",
             "description" => $product->features,
-            "is_taxable" =>   true,
         ];
 
         try {
@@ -1590,86 +1626,183 @@ public function dashboardCounts(Request $request)
     ], 201);
 }
 
-public function agentDashboard(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'agent_id' => 'required|integer|exists:companies,id'
-    ]);
-
-    if ($validator->fails()) {
+    public function agentDashboard(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'agent_id' => 'required|integer|exists:companies,id'
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+    
+        $agentId = $request->agent_id;
+    
+        $now = now();
+        $monthStart = now()->startOfMonth();
+        $monthEnd   = now()->endOfMonth();
+    
+        /* ================= TOTAL RETAILERS ================= */
+        $totalRetailers = Company::where('agent_id', $agentId)
+            ->where('role', 5)
+            ->count();
+    
+        /* ================= SELLING RETAILERS (LAST 7 DAYS) ================= */
+        $sellingRetailers = WDevice::where('agent_id', $agentId)
+            ->where('created_at', '>=', now()->subDays(7))
+            ->distinct('retailer_id')
+            ->count('retailer_id');
+    
+        /* ================= THIS MONTH SALES ================= */
+        $thisMonthSales = WDevice::where('agent_id', $agentId)
+            ->whereBetween('created_at', [$monthStart, $monthEnd])
+            ->sum('product_mrp');
+    
+        /* ================= THIS MONTH COMMISSION ================= */
+        $thisMonthCommission = WDevice::where('agent_id', $agentId)
+            ->whereBetween('created_at', [$monthStart, $monthEnd])
+            ->sum('other_payout');
+    
+        /* ================= LIFETIME COMMISSION ================= */
+        $lifetimeCommission = WDevice::where('agent_id', $agentId)
+            ->sum('other_payout');
+    
+        /* ================= AVG SALES / RETAILER (CURRENT MONTH) ================= */
+        $avgSalesPerRetailer = WDevice::where('agent_id', $agentId)
+            ->whereBetween('created_at', [$monthStart, $monthEnd])
+            ->selectRaw('AVG(product_mrp) as avg_sales')
+            ->value('avg_sales');
+    
+        /* ================= RESPONSE ================= */
         return response()->json([
-            'status' => false,
-            'errors' => $validator->errors()
-        ], 422);
-    }
-
-    $agentId = $request->agent_id;
-
-    $now = now();
-    $monthStart = now()->startOfMonth();
-    $monthEnd   = now()->endOfMonth();
-
-    /* ================= TOTAL RETAILERS ================= */
-    $totalRetailers = Company::where('agent_id', $agentId)
-        ->where('role', 5)
-        ->count();
-
-    /* ================= SELLING RETAILERS (LAST 7 DAYS) ================= */
-    $sellingRetailers = WDevice::where('agent_id', $agentId)
-        ->where('created_at', '>=', now()->subDays(7))
-        ->distinct('retailer_id')
-        ->count('retailer_id');
-
-    /* ================= THIS MONTH SALES ================= */
-    $thisMonthSales = WDevice::where('agent_id', $agentId)
-        ->whereBetween('created_at', [$monthStart, $monthEnd])
-        ->sum('product_mrp');
-
-    /* ================= THIS MONTH COMMISSION ================= */
-    $thisMonthCommission = WDevice::where('agent_id', $agentId)
-        ->whereBetween('created_at', [$monthStart, $monthEnd])
-        ->sum('other_payout');
-
-    /* ================= LIFETIME COMMISSION ================= */
-    $lifetimeCommission = WDevice::where('agent_id', $agentId)
-        ->sum('other_payout');
-
-    /* ================= AVG SALES / RETAILER (CURRENT MONTH) ================= */
-    $avgSalesPerRetailer = WDevice::where('agent_id', $agentId)
-        ->whereBetween('created_at', [$monthStart, $monthEnd])
-        ->selectRaw('AVG(product_mrp) as avg_sales')
-        ->value('avg_sales');
-
-    /* ================= RESPONSE ================= */
-    return response()->json([
-        'status' => true,
-        'data' => [
-            'onboarded_retailers' => [
-                'total' => $totalRetailers,
-            ],
-
-            'selling_retailers' => [
-                'last_7_days' => $sellingRetailers,
-            ],
-
-            'this_month_sales' => [
-                'amount'   => round($thisMonthSales, 2),
-            ],
-
-            'this_month_commission' => [
-                'amount' => round($thisMonthCommission, 2),
-            ],
-
-            'lifetime_commission' => [
-                'amount' => round($lifetimeCommission, 2),
-            ],
-
-            'avg_sales_per_retailer' => [
-                'amount' => round($avgSalesPerRetailer ?? 0, 2),
+            'status' => true,
+            'data' => [
+                'onboarded_retailers' => [
+                    'total' => $totalRetailers,
+                ],
+    
+                'selling_retailers' => [
+                    'last_7_days' => $sellingRetailers,
+                ],
+    
+                'this_month_sales' => [
+                    'amount'   => round($thisMonthSales, 2),
+                ],
+    
+                'this_month_commission' => [
+                    'amount' => round($thisMonthCommission, 2),
+                ],
+    
+                'lifetime_commission' => [
+                    'amount' => round($lifetimeCommission, 2),
+                ],
+    
+                'avg_sales_per_retailer' => [
+                    'amount' => round($avgSalesPerRetailer ?? 0, 2),
+                ]
             ]
-        ]
-    ], 200);
-}
+        ], 200);
+    }
+/*
+    public function generateDeviceCertificate(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'imei1' => 'required'
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        $device = WDevice::with('customer')
+            ->where('imei1', $request->imei1)
+            ->first();
+    
+        if (!$device) {
+            return response()->json([
+                'message' => 'Device not found'
+            ], 404);
+        }
+    
+        $customer = $device->customer;
+        $retailer = Company::find($device->retailer_id);
+        $product  = WarrantyProduct::find($device->product_id);
+    
+        if (!$customer || !$retailer || !$product) {
+            return response()->json([
+                'message' => 'Related data missing for certificate generation'
+            ], 422);
+        }
+    
+      
+        $certificateId = 'GX-WNTY-' . now()->year . '-' . str_pad($device->id, 5, '0', STR_PAD_LEFT);
+        $verifyUrl = "https://verify.goelectronix.in/cert/{$certificateId}";
+    
+             $templatePath = storage_path('app/template/WarrantyCertificate.docx');
+    
+        $templatePath = storage_path('app/template/WarrantyCertificate.docx');
+        $templateProcessor = new TemplateProcessor($templatePath);
+    
+       
+        $templateProcessor->setValue('certificateId', $certificateId);
+        $templateProcessor->setValue('customerName', $customer->name);
+        $templateProcessor->setValue('customerPhone', $customer->mobile);
+        $templateProcessor->setValue('brand', $device->brand_name);
+        $templateProcessor->setValue('model', $device->model);
+        $templateProcessor->setValue('category', $device->category_name);
+        $templateProcessor->setValue('imei1', $device->imei1);
+        $templateProcessor->setValue('serial', $device->serial ?? '');
+        $templateProcessor->setValue('planName', $product->name);
+        $templateProcessor->setValue('planSummary', strip_tags($product->features));
+        $templateProcessor->setValue('maxClaims', $device->available_claim);
+        $templateProcessor->setValue('coverageLimit', number_format($device->device_price, 2));
+        $templateProcessor->setValue('retailerName', $retailer->business_name);
+        $templateProcessor->setValue('retailerCode', $retailer->company_code);
+        $templateProcessor->setValue('retailerAddress', $retailer->address_line1);
+        $templateProcessor->setValue('retailerContact', $retailer->contact_phone);
+        $templateProcessor->setValue('startDate', now()->toDateString());
+        $templateProcessor->setValue('endDate', Carbon::parse($device->expiry_date)->toDateString());
+        $templateProcessor->setValue('issuedOn', now()->toDateString());
+        $templateProcessor->setValue('verifyUrl', $verifyUrl);
+    
+      
+        $folderPath = storage_path('app/public/warranty_pdfs');
+        if (!file_exists($folderPath)) {
+            mkdir($folderPath, 0777, true);
+        }
+    
+    
+        $docxFile = "{$folderPath}/{$certificateId}.docx";
+        $templateProcessor->saveAs($docxFile);
+    
+    
+        $command = "libreoffice --headless --convert-to pdf --outdir {$folderPath} {$docxFile}";
+        exec($command);
+    
+        $pdfFileName = "{$certificateId}.pdf";
+        $pdfPath = "warranty_pdfs/{$pdfFileName}";
+        $certificateLink = Storage::disk('public')->url($pdfPath);
+    
+       
+        $device->update([
+            'certificate_link' => $certificateLink
+        ]);
+    
+        return response()->json([
+            'success'         => true,
+            'message'         => 'Certificate generated successfully',
+            'certificate_id'  => $certificateId,
+            'certificate_url' => $certificateLink
+        ]);
+    }
+*/
 
 public function generateDeviceCertificate(Request $request)
 {
@@ -1685,7 +1818,7 @@ public function generateDeviceCertificate(Request $request)
         ], 422);
     }
 
-    $device = WDevice::with('customer')
+    $device = WDevice::with(['customer','product.coverages'])
         ->where('imei1', $request->imei1)
         ->first();
 
@@ -1697,7 +1830,7 @@ public function generateDeviceCertificate(Request $request)
 
     $customer = $device->customer;
     $retailer = Company::find($device->retailer_id);
-    $product  = WarrantyProduct::find($device->product_id);
+    $product  = $device->product;
 
     if (!$customer || !$retailer || !$product) {
         return response()->json([
@@ -1705,56 +1838,31 @@ public function generateDeviceCertificate(Request $request)
         ], 422);
     }
 
-    /** Certificate Details */
+    /** Certificate ID */
     $certificateId = 'GX-WNTY-' . now()->year . '-' . str_pad($device->id, 5, '0', STR_PAD_LEFT);
-    $verifyUrl = "https://verify.goelectronix.in/cert/{$certificateId}";
 
-         $templatePath = storage_path('app/template/WarrantyCertificate.docx');
-    /** Load Template */
-    $templatePath = storage_path('app/template/WarrantyCertificate.docx');
-    $templateProcessor = new TemplateProcessor($templatePath);
+    /** Generate PDF from Blade */
+    $pdf = Pdf::loadView('certificate', [
+        'device' => $device,
+        'customer' => $customer,
+        'product' => $product,
+        'retailer' => $retailer,
+        'certificateId' => $certificateId
+    ])->setPaper('A4');
 
-    /** Replace Variables */
-    $templateProcessor->setValue('certificateId', $certificateId);
-    $templateProcessor->setValue('customerName', $customer->name);
-    $templateProcessor->setValue('customerPhone', $customer->mobile);
-    $templateProcessor->setValue('brand', $device->brand_name);
-    $templateProcessor->setValue('model', $device->model);
-    $templateProcessor->setValue('category', $device->category_name);
-    $templateProcessor->setValue('imei1', $device->imei1);
-    $templateProcessor->setValue('serial', $device->serial ?? '');
-    $templateProcessor->setValue('planName', $product->name);
-    $templateProcessor->setValue('planSummary', strip_tags($product->features));
-    $templateProcessor->setValue('maxClaims', $device->available_claim);
-    $templateProcessor->setValue('coverageLimit', number_format($device->device_price, 2));
-    $templateProcessor->setValue('retailerName', $retailer->business_name);
-    $templateProcessor->setValue('retailerCode', $retailer->company_code);
-    $templateProcessor->setValue('retailerAddress', $retailer->address_line1);
-    $templateProcessor->setValue('retailerContact', $retailer->contact_phone);
-    $templateProcessor->setValue('startDate', now()->toDateString());
-    $templateProcessor->setValue('endDate', Carbon::parse($device->expiry_date)->toDateString());
-    $templateProcessor->setValue('issuedOn', now()->toDateString());
-    $templateProcessor->setValue('verifyUrl', $verifyUrl);
-
-    /** Ensure folder exists */
+    /** Folder */
     $folderPath = storage_path('app/public/warranty_pdfs');
     if (!file_exists($folderPath)) {
         mkdir($folderPath, 0777, true);
     }
 
-    /** Save DOCX */
-    $docxFile = "{$folderPath}/{$certificateId}.docx";
-    $templateProcessor->saveAs($docxFile);
+    /** Save PDF */
+    $pdfFileName = $certificateId . '.pdf';
+    $pdf->save($folderPath . '/' . $pdfFileName);
 
-    /** Convert DOCX → PDF */
-    $command = "libreoffice --headless --convert-to pdf --outdir {$folderPath} {$docxFile}";
-    exec($command);
+    $certificateLink = Storage::disk('public')->url('warranty_pdfs/'.$pdfFileName);
 
-    $pdfFileName = "{$certificateId}.pdf";
-    $pdfPath = "warranty_pdfs/{$pdfFileName}";
-    $certificateLink = Storage::disk('public')->url($pdfPath);
-
-    /** Update Device */
+    /** Update device */
     $device->update([
         'certificate_link' => $certificateLink
     ]);
@@ -1765,5 +1873,738 @@ public function generateDeviceCertificate(Request $request)
         'certificate_id'  => $certificateId,
         'certificate_url' => $certificateLink
     ]);
+}
+
+public function getMatchingPriceTemplateforDevice($devicePrice, $productType, $companyId, $categoryId)
+    {
+        return PriceTemplate::with('product')
+            ->where('company_id', $companyId)
+            ->where('product_type', $productType)
+            ->where('min_price', '<=', $devicePrice)
+            ->where('max_price', '>=', $devicePrice)
+            // ✅ Filter by the product's category using whereHas
+            ->whereHas('product.categories', function ($query) use ($categoryId) {
+                // 'category.id' because your Category model has protected $table = 'category';
+                $query->where('category.id', $categoryId); 
+            })
+            ->orderBy('id', 'asc')
+            ->get();   // 🔥 MUST BE get()
+    }
+    
+public function priceReport(Request $request)
+    {
+        $companyId  = $request->company_id;
+        $brandId    = $request->brand_id;      // optional
+        $categoryId = $request->category_id;   // optional
+
+        $devicesQuery = DeviceModel::select('device_models.*')
+            ->join('brands', 'brands.id', '=', 'device_models.brand_id')
+            ->with(['brand', 'category'])
+            ->where('device_models.status', 1);
+
+        // ✅ Filter by brand if provided
+        if (!empty($brandId)) {
+            $devicesQuery->where('device_models.brand_id', $brandId);
+        }
+
+        // ✅ Filter by category if provided
+        if (!empty($categoryId)) {
+            $devicesQuery->where('device_models.category_id', $categoryId);
+        }
+
+        // ✅ Keep sorting
+        $devices = $devicesQuery
+            ->orderBy('brands.name', 'asc')
+            ->orderBy('device_models.price', 'asc')
+            ->get();
+
+        $productTypes = [
+            'Screen Damage',
+            'Total Protection',
+            'Extended Warranty'
+        ];
+
+        $finalReport = [];
+
+        foreach ($devices as $device) {
+
+            $modelData = [
+                'brand'        => $device->brand->name ?? null,
+                'model'        => $device->name,
+                'device_price' => $device->price,
+                'category'     => $device->category->name ?? null,
+                'packages'     => []
+            ];
+
+            foreach ($productTypes as $type) {
+
+                // ✅ Pass $device->category_id as the 4th parameter
+                $templates = $this->getMatchingPriceTemplateforDevice(
+                    $device->price,
+                    $type,
+                    $companyId,
+                    $device->category_id 
+                );
+
+                if ($templates->isEmpty()) {
+                    $modelData['packages'][] = [
+                        'product_type'    => $type,
+                        'product_name'    => null,
+                        'claims'          => null,
+                        'validity_days'   => null,
+                        'product_price'   => null,
+                        'company_payout'  => null,
+                        'agent_payout'    => null,
+                        'other_payout'    => null,
+                        'retailer_payout' => null,
+                        'is_matched'      => false,
+                    ];
+                    continue;
+                }
+
+                foreach ($templates as $template) {
+
+                   $productPrice = $template->product?->mrp ?? 0;
+
+                   if ($template->is_percent) {
+                       $companyPayout  = ($device->price * $template->company_payout) / 100;
+                       $agentPayout    = ($device->price * $template->emp_payout) / 100;
+                       $otherPayout    = ($device->price * $template->other_payout) / 100;
+                       $retailerPayout = ($device->price * $template->retailer_payout) / 100;
+                       $productMrp = ($device->price * $productPrice) / 100;
+                   } else {
+                       $companyPayout  = $template->company_payout;
+                       $agentPayout    = $template->emp_payout;
+                       $otherPayout    = $template->other_payout;
+                       $retailerPayout = $template->retailer_payout;
+                       $productMrp = $productPrice; 
+                   }
+                       
+                   $modelData['packages'][] = [
+                       'product_type'    => $type,
+                       'product_name'    => $template->product?->name,
+                       'claims'          => $template->product?->claims,
+                       'validity_days'   => $template->product?->validity,
+                       'product_price'   => $productMrp,
+                       'company_payout'  => $companyPayout,
+                       'agent_payout'    => $agentPayout,
+                       'other_payout'    => $otherPayout,
+                       'retailer_payout' => $retailerPayout,
+                       'is_matched'      => true,
+                   ];
+                }
+            }
+
+            $finalReport[] = $modelData;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data'    => $finalReport
+        ]);
+    }
+
+
+    public function createDeviceWithInvoiceAndCredit(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'imei1'         => 'required',
+            'product_id'    => 'required|exists:w_products,id',
+            'company_id'    => 'required|exists:companies,id',
+            'retailer_id'   => 'required|exists:companies,id',
+            'w_customer_id' => 'required|exists:w_customers,id'
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        DB::beginTransaction();
+    
+        try {
+    
+            // ===============================
+            // DUPLICATE CHECK
+            // ===============================
+    
+            $exists = WDevice::where('product_id', $request->product_id)
+                ->where(function ($query) use ($request) {
+    
+                    $query->where('imei1', $request->imei1);
+    
+                    if ($request->imei2) {
+                        $query->orWhere('imei2', $request->imei2);
+                    }
+    
+                    if ($request->serial) {
+                        $query->orWhere('serial', $request->serial);
+                    }
+                })
+                ->exists();
+    
+            if ($exists) {
+                throw new \Exception('Device with the same IMEI or Serial already exists.');
+            }
+    
+            // ===============================
+            // CALCULATE MRP
+            // ===============================
+    
+            $wproduct = WarrantyProduct::find($request->product_id);
+            
+            $product_mrp = 0;
+            
+            if ($wproduct && $wproduct->is_percent == 1) {
+                $product_mrp = ($request->product_mrp / 100) * $request->device_price;
+            } else {
+                $product_mrp = $request->product_mrp;
+            }
+            
+            
+              $pricing = WarrantyPricingService::calculate(
+                $request->product_id,
+                $request->company_id,
+                $request->device_price
+            );
+    
+            // ===============================
+            // CREATE DEVICE
+            // ===============================
+    
+            $device = WDevice::create([
+                'imei1' => $request->imei1,
+                'imei2' => $request->imei2,
+                'serial' => $request->serial,
+    
+                'brand_id' => $request->brand_id,
+                'category_id' => $request->category_id,
+                'product_id' => $request->product_id,
+    
+                'product_name' => $request->product_name,
+                'brand_name' => $request->brand_name,
+                'model' => $request->model,
+                'model_id' => $request->model_id,
+    
+                'category_name' => $request->category_name,
+    
+                'available_claim' => $request->available_claim,
+                'expiry_date' => $request->expiry_date,
+    
+                'document_url' => $request->document_url,
+                'link1' => $request->link1,
+                'link2' => $request->link2,
+    
+                'device_price' => $request->device_price,
+                'product_price' => $request->product_price,
+                'product_mrp' => $product_mrp,
+    
+               'retailer_payout' => $pricing['retailer_payout'],
+                'employee_payout' => $pricing['employee_payout'],
+                'other_payout'    => $pricing['other_payout'],
+                'company_payout'  => $pricing['company_payout'],
+    
+                'company_id' => $request->company_id,
+                'retailer_id' => $request->retailer_id,
+                'w_customer_id' => $request->w_customer_id,
+    
+                'agent_id' => $request->agent_id,
+                'created_by' => $request->created_by,
+    
+                'is_approved' => 1,
+                'is_pay_later' => $request->is_pay_later,
+    
+                'status' => 1
+            ]);
+    
+            // ===============================
+            // GENERATE WARRANTY CODE
+            // ===============================
+    
+            $device->w_code = 'WRT-' . $device->id . '-' . strtoupper(Str::random(6));
+            $device->save();
+    
+            // ===============================
+            // GET CUSTOMER
+            // ===============================
+    
+            $customer = WCustomer::findOrFail($device->w_customer_id);
+    
+            // ===============================
+            // GET ZOHO PRODUCT
+            // ===============================
+    
+            $product = WarrantyProduct::findOrFail($request->product_id);
+    
+            if (!$product->zoho_id) {
+                throw new \Exception('Zoho product mapping not found');
+            }
+    
+            // ===============================
+            // CREATE INVOICE
+            // ===============================
+    
+            $invoiceResult = $this->createWarrantyInvoice(
+                $device,
+                $customer,
+                $request->company_id,
+                $product->zoho_id
+            );
+    
+            if (!$invoiceResult['success']) {
+                throw new \Exception($invoiceResult['message']);
+            }
+    
+            $invoiceId = $invoiceResult['invoice']['invoice_id'];
+    
+            // ===============================
+            // APPLY CREDIT
+            // ===============================
+    
+            if (!empty($request->credit_amount) && $request->credit_amount > 0) {
+            
+                $creditAmount = round($request->credit_amount, 2);
+            
+                $creditResult = $this->applyCreditToInvoice(
+                    $request->company_id,
+                    $request->retailer_id,
+                    $invoiceId,
+                    $creditAmount
+                );
+            
+                if (!$creditResult['success']) {
+                    throw new \Exception($creditResult['message']);
+                }
+            }
+    
+            // ===============================
+            // SAVE INVOICE
+            // ===============================
+    
+            $device->update([
+                'invoice_id' => $invoiceId
+            ]);
+    
+            DB::commit();
+    
+            event(new WarrantyRegisterWhatsapp($device->fresh()));
+            
+            
+             try {
+                    app(\App\Services\WhatsappService::class)
+                        ->sendWarranty($device);
+                } catch (\Exception $e) {
+                    \Log::error('WhatsApp failed', [
+                        'device_id' => $device->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Device created, invoice generated, credit applied.',
+                'invoice_id' => $invoiceId
+            ]);
+    
+        } catch (\Exception $e) {
+    
+            DB::rollBack();
+    
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+    public function applyCreditToInvoice($company_id, $retailer_id, $invoiceId, $amount)
+    {
+        try {
+    
+            $company = Company::find($company_id);
+            $retailer = Company::find($retailer_id);
+    
+            if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+                return [
+                    'success' => false,
+                    'message' => 'Zoho credentials missing'
+                ];
+            }
+    
+            if (!$retailer || !$retailer->zoho_id) {
+                return [
+                    'success' => false,
+                    'message' => 'Retailer Zoho contact id missing'
+                ];
+            }
+    
+            $client = new \GuzzleHttp\Client();
+    
+            /*
+            |--------------------------------------------------------------------------
+            | STEP 1 — GET CUSTOMER PAYMENTS
+            |--------------------------------------------------------------------------
+            */
+    
+            $response = $client->get(
+                "https://www.zohoapis.in/books/v3/customerpayments",
+                [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token
+                    ],
+                    'query' => [
+                        'organization_id' => $company->zoho_org_id,
+                        'customer_id' => $retailer->zoho_id
+                    ]
+                ]
+            );
+    
+            $body = json_decode($response->getBody(), true);
+            $payments = $body['customerpayments'] ?? [];
+    
+            if (empty($payments)) {
+                return [
+                    'success' => false,
+                    'message' => 'No payments found'
+                ];
+            }
+    
+            /*
+            |--------------------------------------------------------------------------
+            | STEP 2 — FILTER UNUSED PAYMENTS
+            |--------------------------------------------------------------------------
+            */
+    
+            $invoicePayments = [];
+            $remainingAmount = $amount;
+    
+            foreach ($payments as $payment) {
+    
+                if ($payment['unused_amount'] <= 0) {
+                    continue;
+                }
+    
+                $applyAmount = min($payment['unused_amount'], $remainingAmount);
+    
+                $invoicePayments[] = [
+                    "payment_id" => $payment['payment_id'],
+                    "amount_applied" => $applyAmount
+                ];
+    
+                $remainingAmount -= $applyAmount;
+    
+                if ($remainingAmount <= 0) {
+                    break;
+                }
+            }
+    
+            if (empty($invoicePayments)) {
+                return [
+                    'success' => false,
+                    'message' => 'No unused payment credits available'
+                ];
+            }
+    
+            /*
+            |--------------------------------------------------------------------------
+            | STEP 3 — APPLY CREDITS
+            |--------------------------------------------------------------------------
+            */
+    
+            $payload = [
+                "invoice_payments" => $invoicePayments,
+                "apply_creditnotes" => []
+            ];
+    
+            $response = $client->post(
+                "https://www.zohoapis.in/books/v3/invoices/{$invoiceId}/credits",
+                [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                        'content-type'  => 'application/json'
+                    ],
+                    'query' => [
+                        'organization_id' => $company->zoho_org_id
+                    ],
+                    'json' => $payload
+                ]
+            );
+    
+            return [
+                'success' => true,
+                'applied_payments' => $invoicePayments,
+                'response' => json_decode($response->getBody(), true)
+            ];
+    
+        } catch (\Exception $e) {
+    
+            return [
+                'success' => false,
+                'message' => $e->getMessage()
+            ];
+        }
+    }
+    public function getCoverageByType(Request $request)
+    {
+        $request->validate([
+            'product_type' => 'required'
+        ]);
+    
+        $products = WarrantyProduct::with('coverages')
+            ->where('product_type', $request->product_type)
+            ->where('status', 1)
+            ->get();
+    
+        if ($products->isEmpty()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'No products found for this type'
+            ], 404);
+        }
+    
+        $response = $products->map(function ($product) {
+            return [
+                'coverage'     => $product->coverage,
+                'exclusions'  => $product->exclusions,
+                'features'    => $product->features
+            ];
+        });
+    
+        return response()->json([
+            'status' => true,
+            'data'   => $response
+        ]);
+    }
+    
+    public function updatePriceTemplate(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'warranty_product_id' => 'required|exists:w_products,id',
+            'emp_payout'          => 'required|numeric|min:0',
+            'retailer_payout'     => 'required|numeric|min:0',
+            'other_payout'        => 'required|numeric|min:0',
+            'company_payout'      => 'required|numeric|min:0',
+            'company_id'          => 'required|exists:companies,id',
+            'min_price'           => 'required|numeric|min:0',
+            'max_price'           => 'required|numeric|min:0|gte:min_price',
+            'is_fixed'            => 'required|boolean',
+            'is_percent'          => 'required|boolean',
+            'product_price'       => 'required'
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => 'Validation error',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+    
+        // ✅ Find template
+        $priceTemplate = PriceTemplate::find($id);
+    
+        if (!$priceTemplate) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Price template not found',
+            ], 404);
+        }
+    
+        // ✅ Fetch warranty product
+        $product = WarrantyProduct::find($request->warranty_product_id);
+    
+        if (!$product) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Warranty product not found.',
+            ], 404);
+        }
+    
+        // ✅ Check product min/max rules
+        if ($product->min_value && $request->min_price < $product->min_value) {
+            return response()->json([
+                'status' => false,
+                'message' => "Minimum price should not be less than product's allowed min_value ({$product->min_value})."
+            ], 422);
+        }
+    
+        if ($product->max_value && $request->max_price > $product->max_value) {
+            return response()->json([
+                'status' => false,
+                'message' => "Maximum price should not exceed product's allowed max_value ({$product->max_value})."
+            ], 422);
+        }
+    
+        // ✅ Match product price type
+        if ($product->is_fixed != $request->is_fixed) {
+            return response()->json([
+                'status' => false,
+                'message' => "Price template 'is_fixed' must match product setting."
+            ], 422);
+        }
+    
+        if ($product->is_percent != $request->is_percent) {
+            return response()->json([
+                'status' => false,
+                'message' => "Price template 'is_percent' must match product setting."
+            ], 422);
+        }
+    
+        // ✅ Check overlapping price range (exclude current record)
+        $exists = PriceTemplate::where('warranty_product_id', $request->warranty_product_id)
+            ->where('company_id', $request->company_id)
+            ->where('id', '!=', $id)
+            ->where(function ($query) use ($request) {
+                $query->whereBetween('min_price', [$request->min_price, $request->max_price])
+                    ->orWhereBetween('max_price', [$request->min_price, $request->max_price])
+                    ->orWhere(function ($q) use ($request) {
+                        $q->where('min_price', '<=', $request->min_price)
+                          ->where('max_price', '>=', $request->max_price);
+                    });
+            })
+            ->exists();
+    
+        if ($exists) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Price range already exists for this product.',
+            ], 409);
+        }
+    
+        // ✅ Update template
+        $priceTemplate->update($request->all());
+    
+        return response()->json([
+            'status' => true,
+            'message' => 'Price template updated successfully',
+            'price_template' => $priceTemplate,
+        ]);
+    }
+    
+public function getRetailerTransactions($company_id, $retailer_id)
+{
+    try {
+
+        $company = Company::find($company_id);
+        $retailer = Company::find($retailer_id);
+
+        if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Zoho credentials missing'
+            ], 400);
+        }
+
+        if (!$retailer || !$retailer->zoho_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Retailer Zoho contact id missing'
+            ], 400);
+        }
+
+        $client = new \GuzzleHttp\Client();
+
+        /*
+        |--------------------------------------------------------------------------
+        | FETCH CUSTOMER PAYMENTS
+        |--------------------------------------------------------------------------
+        */
+
+        $response = $client->get(
+            "https://www.zohoapis.in/books/v3/customerpayments",
+            [
+                'headers' => [
+                    'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token
+                ],
+                'query' => [
+                    'organization_id' => $company->zoho_org_id,
+                    'customer_id' => $retailer->zoho_id
+                ]
+            ]
+        );
+
+        $body = json_decode($response->getBody(), true);
+        $payments = $body['customerpayments'] ?? [];
+
+       
+
+
+        return response()->json([
+            'success' => true,
+            'retailer_id' => $retailer_id,
+            'transactions' => $payments
+        ]);
+
+    } catch (\Exception $e) {
+
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
+    }
+}
+
+public function getInvoicesAgainstPayment($company_id, $payment_id)
+{
+    try {
+
+        $company = Company::find($company_id);
+
+        if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Zoho credentials missing'
+            ], 400);
+        }
+
+        $client = new \GuzzleHttp\Client();
+
+        $response = $client->get(
+            "https://www.zohoapis.in/books/v3/customerpayments/{$payment_id}",
+            [
+                'headers' => [
+                    'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token
+                ],
+                'query' => [
+                    'organization_id' => $company->zoho_org_id
+                ]
+            ]
+        );
+
+        $body = json_decode($response->getBody(), true);
+
+        $payment = $body['payment'] ?? [];
+
+        $invoices = $payment['invoices'] ?? [];
+
+        $invoiceList = [];
+
+        foreach ($invoices as $invoice) {
+
+            $invoiceList[] = [
+                'invoice_id' => $invoice['invoice_id'],
+                'invoice_number' => $invoice['invoice_number'],
+                'invoice_amount' => $invoice['invoice_amount'] ?? 0,
+                'amount_applied' => $invoice['amount_applied'] ?? 0,
+                'date' => $invoice['date'] ?? null
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'payment_id' => $payment_id,
+            'payment_amount' => $payment['amount'] ?? 0,
+            'unused_amount' => $payment['unused_amount'] ?? 0,
+            'invoices' => $invoiceList
+        ]);
+
+    } catch (\Exception $e) {
+
+        return response()->json([
+            'success' => false,
+            'message' => $e->getMessage()
+        ], 500);
+    }
 }
 }

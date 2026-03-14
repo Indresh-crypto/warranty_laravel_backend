@@ -31,7 +31,8 @@ class WarrantyProduct extends Model
         'status',
         'margin',
         'coverage',
-        'exclustions'
+        'exclusions',
+        'product_type'
     ];
 
    

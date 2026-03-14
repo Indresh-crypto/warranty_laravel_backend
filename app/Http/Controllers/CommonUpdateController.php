@@ -97,20 +97,17 @@ class CommonUpdateController extends Controller
         
         /* ================= Status update ================= */
        
-      if ((int) $request->is_verified === 7) {
+        if ((int) $request->is_verified === 7) {
 
-            $lead = WLead::where('email', $request->contact_email)->first();
-        
-            if (!$lead) {
-                return;
+                // Fetch lead safely
+                $lead = WLead::where('email', $request->contact_email)->first();
+            
+                if ($lead && !empty($lead->email)) {
+                    Mail::to($lead->email)->queue(
+                        new LeadWonMail($lead)
+                    );
+                }
             }
-        
-            $lead->update(['status' => 'won']);
-        
-            if ($lead->email) {
-                Mail::to($lead->email)->queue(new LeadWonMail($lead));
-            }
-        }
 
         
         /* ================= Apply update ================= */
@@ -126,7 +123,100 @@ class CommonUpdateController extends Controller
         ], 200);
     }
 
+    // =========================
+    // CREATE NEW COMPANY
+    // =========================
+
+    // Fetch state_in & district_in from pincode
+    $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
+
+    if (!$pincodeData) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Invalid pincode'
+        ], 422);
+    }
+
+    $stateIn    = $pincodeData->state_in;
+    $districtIn = $pincodeData->district_in;
+
+
+
+    $leaddata = WLead::where('email', $request->contact_email)->first();
+    // Set defaults
+   $plainPassword = random_int(100000, 999999);
+  
+    $data['password']    = Hash::make($plainPassword);
+    
+    $data['status']      = $request->status ?? 1;
+    $data['is_verified'] = $request->is_verified ?? 0;
+    $data['senior_id'] =   $request->senior_id ?? 0;
+    $data['agent_code'] =  $request->agent_code ?? 0;
+
+    $data['created_by_id'] =    $leaddata['created_by_id'] ?? 0;
+    $data['created_by_name'] =  $leaddata['created_by_name'] ?? '';
    
+   $signinUrl = "https://goelectronix.com/signin?email=" . urlencode($leaddata->email);
+
+    Mail::to($leaddata->email)
+        ->send(new LeadCreateMail($leaddata, $signinUrl, $plainPassword));
+        
+    // Create company
+    $user = Company::create($data);
+
+    // =========================
+    // GENERATE USER CODE (ONLY ON CREATE)
+    // =========================
+    switch ($user->role) {
+        case 5: // Retailer
+            $userCode = "RET-{$user->id}-{$stateIn}-{$districtIn}";
+             
+            break;
+
+        case 4: // Agent
+            $userCode = "AGT-{$user->id}-{$stateIn}-{$districtIn}";
+               SendAgentPendingWhatsapp::dispatch($user->id);
+            break;
+
+        case 3: // CPE
+            $userCode = "CPE-{$user->id}-{$stateIn}-{$districtIn}";
+            break;
+
+        case 2: // Company
+            $userCode = "COMP{$user->id}-{$stateIn}-{$districtIn}";
+             SendCompanyCreatedWhatsapp::dispatch($user->id);
+            break;
+
+        default:
+            $userCode = "USR-{$user->id}-{$stateIn}-{$districtIn}";
+            break;
+    }
+
+    $user->update([
+        'company_code' => $userCode
+    ]);
+
+
+    // =========================
+    // UPDATE WLEAD PACKAGE (IF EXISTS)
+    // =========================
+    if ($request->filled('package_id')) {
+        WLead::where('email', $request->contact_email)->update([
+            'package_id'   => $request->package_id,
+            'package_name' => $request->package_name,
+            'badge_name'   => $request->badge_name,
+            'badge_id'     => $request->badge_id,
+            'benefits'     => $request->benefits,
+            'eligibility'  => $request->eligibility,
+            'lead_amount'  => $request->lead_amount
+        ]);
+    }
+
+    return response()->json([
+        'status'  => true,
+        'message' => 'Company created successfully and credentials emailed',
+        'data'    => $user->refresh()
+    ], 201);
 }
     private function generateCode($prefix, $model, $column)
     {
@@ -139,9 +229,8 @@ class CommonUpdateController extends Controller
         
     public function getCompanies(Request $request)
     {
-    //    $query = Company::query();
+        $query = Company::query();
     
-    $query = Company::with('leads');
         // ---------------------------------
         // EXACT FILTERS
         // ---------------------------------

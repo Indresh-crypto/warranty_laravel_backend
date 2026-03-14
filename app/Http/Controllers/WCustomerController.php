@@ -779,6 +779,16 @@ public function payouts(Request $request)
         ), 0
     ) AS paid_amount,
 
+COALESCE(
+    SUM(
+        CASE 
+            WHEN invoice_status = 'paid'
+            THEN 1
+            ELSE 0
+        END
+    ), 0
+) AS paid_count,
+
     COALESCE(
         SUM(
             CASE 
@@ -789,6 +799,16 @@ public function payouts(Request $request)
         ), 0
     ) AS credit_note_count,
 
+COALESCE(
+    SUM(
+        CASE 
+            WHEN invoice_id IS NOT NULL 
+             AND invoice_id != ''
+            THEN 1
+            ELSE 0
+        END
+    ), 0
+) AS total_invoice_count,
     COALESCE(SUM($earningColumn), 0) AS my_earnings
 ")->first();
 
@@ -812,7 +832,8 @@ public function payouts(Request $request)
             'payable_amount' => (float) $summary->payable_amount,
             'my_earnings'    => (float) $summary->my_earnings,
             'paid_amount'    => (float) $summary->paid_amount,
-            'credit_note_count'    => (float) $summary->credit_note_count
+            'credit_note_count'    => (float) $summary->credit_note_count,
+            'total_invoice_count'       =>    (int) $summary->total_invoice_count
         ]
     ], 200);
 }

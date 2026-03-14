@@ -7,7 +7,8 @@ use App\Models\CompanyEmployee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
-
+use Illuminate\Support\Facades\Log;
+use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Password;
 
 class CompanyController extends Controller
@@ -356,7 +357,7 @@ public function sendResetLink(Request $request)
     ]);
 
     $status = Password::broker('companies')->sendResetLink([
-        'contact_email' => $request->email  
+        'contact_email' => $request->email   // ✅ MUST MATCH COLUMN
     ]);
 
     return response()->json([
@@ -453,5 +454,190 @@ public function dashboardCounts(Request $request)
     ]);
 }
 
+public function syncZohoWalletBalance(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'company_id' => 'required|exists:companies,id', // Parent
+        'user_id'    => 'required|exists:companies,id', // Child (wallet owner)
+    ]);
 
+    if ($validator->fails()) {
+        return response()->json([
+            'status' => false,
+            'errors' => $validator->errors()
+        ], 422);
+    }
+
+    /**
+     * 🔹 Parent company (Zoho credentials holder)
+     */
+    $parentCompany = Company::find($request->company_id);
+
+    if (
+        !$parentCompany ||
+        !$parentCompany->zoho_access_token ||
+        !$parentCompany->zoho_org_id
+    ) {
+        return response()->json([
+            'status' => false,
+            'error' => 'Parent Zoho credentials not found.'
+        ], 400);
+    }
+
+    /**
+     * 🔹 Child company (wallet to update)
+     */
+    $userCompany = Company::find($request->user_id);
+
+    if (!$userCompany || !$userCompany->zoho_id) {
+        return response()->json([
+            'status' => false,
+            'error' => 'User company Zoho contact ID missing.'
+        ], 400);
+    }
+
+    $client = new \GuzzleHttp\Client();
+
+    try {
+
+        $response = $client->get(
+            "https://www.zohoapis.in/books/v3/contacts/{$userCompany->zoho_id}",
+            [
+                'headers' => [
+                    'Authorization' => 'Zoho-oauthtoken ' . $parentCompany->zoho_access_token,
+                ],
+                'query' => [
+                    'organization_id' => $parentCompany->zoho_org_id,
+                ],
+            ]
+        );
+
+        $body = json_decode($response->getBody(), true);
+        $zohoContact = $body['contact'] ?? null;
+
+        if (!$zohoContact) {
+            return response()->json([
+                'status' => false,
+                'error' => 'Contact not found in Zoho.'
+            ], 404);
+        }
+
+        // 🔥 Get unused credits
+        $walletBalance = $zohoContact['unused_credits_receivable_amount'] ?? 0;
+
+        // ✅ Update USER company wallet (NOT parent)
+        $userCompany->update([
+            'wallet_balance' => $walletBalance,
+            'last_update_balance_at' => now()
+        ]);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Wallet balance synced successfully.',
+            'user_id' => $userCompany->id,
+            'wallet_balance' => $walletBalance
+        ]);
+
+    } catch (\GuzzleHttp\Exception\ClientException $e) {
+
+        $errorBody = json_decode(
+            $e->getResponse()->getBody()->getContents(),
+            true
+        );
+
+        return response()->json([
+            'status' => false,
+            'error' => $errorBody['message'] ?? $e->getMessage(),
+        ], $e->getResponse()->getStatusCode());
+    }
+}
+
+     public function syncCompanyBalances()
+    {
+        $client = new Client();
+
+        $companies = Company::whereNotNull('zoho_access_token')
+            ->whereNotNull('zoho_org_id')
+            ->get();
+
+        foreach ($companies as $company) {
+
+            try {
+
+                /*
+                |--------------------------------------------------------------------------
+                | FETCH RECEIVABLES SUMMARY
+                |--------------------------------------------------------------------------
+                */
+
+                $response = $client->get(
+                    "https://www.zohoapis.in/books/v3/reports/receivablesummary",
+                    [
+                        'headers' => [
+                            'Authorization' =>
+                                'Zoho-oauthtoken ' . $company->zoho_access_token
+                        ],
+                        'query' => [
+                            'organization_id' => $company->zoho_org_id
+                        ]
+                    ]
+                );
+
+                $body = json_decode($response->getBody(), true);
+
+                $totalReceivable = $body['report']['total'] ?? 0;
+
+                /*
+                |--------------------------------------------------------------------------
+                | FETCH UNUSED CREDIT NOTES
+                |--------------------------------------------------------------------------
+                */
+
+                $creditResponse = $client->get(
+                    "https://www.zohoapis.in/books/v3/creditnotes",
+                    [
+                        'headers' => [
+                            'Authorization' =>
+                                'Zoho-oauthtoken ' . $company->zoho_access_token
+                        ],
+                        'query' => [
+                            'organization_id' => $company->zoho_org_id,
+                            'filter_by' => 'Status.Unused'
+                        ]
+                    ]
+                );
+
+                $creditBody = json_decode($creditResponse->getBody(), true);
+
+                $unusedCredit = collect($creditBody['creditnotes'] ?? [])
+                    ->sum('balance');
+
+                /*
+                |--------------------------------------------------------------------------
+                | UPDATE COMPANY TABLE
+                |--------------------------------------------------------------------------
+                */
+
+                $company->update([
+                    'zoho_receivable_balance'     => $totalReceivable,
+                    'zoho_unused_credit_balance'  => $unusedCredit,
+                    'zoho_last_sync_at'           => now()
+                ]);
+
+            } catch (\Exception $e) {
+
+                Log::error('Zoho Balance Sync Failed', [
+                    'company_id' => $company->id,
+                    'error' => $e->getMessage()
+                ]);
+
+                continue; // move to next company
+            }
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Zoho balances synced successfully'
+        ]);
+    }
 }

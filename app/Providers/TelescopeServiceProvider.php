@@ -13,7 +13,6 @@ class TelescopeServiceProvider extends TelescopeApplicationServiceProvider
     /**
      * Register any application services.
      */
-     /*
     public function register(): void
     {
         // Telescope::night();
@@ -31,16 +30,6 @@ class TelescopeServiceProvider extends TelescopeApplicationServiceProvider
                    $entry->hasMonitoredTag();
         });
     }
-*/
-
-public function register(): void
-{
-    $this->hideSensitiveRequestDetails();
-
-    Telescope::filter(function (IncomingEntry $entry) {
-        return true; // 🔥 Log everything
-    });
-}
 
     /**
      * Prevent sensitive request details from being logged by Telescope.
@@ -65,10 +54,12 @@ public function register(): void
      *
      * This gate determines who can access Telescope in non-local environments.
      */
-   protected function gate()
+    protected function gate(): void
     {
-        Gate::define('viewTelescope', function () {
-            return true;
+        Gate::define('viewTelescope', function (User $user) {
+            return in_array($user->email, [
+                //
+            ]);
         });
     }
 }

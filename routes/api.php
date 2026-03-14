@@ -40,7 +40,13 @@ use App\Http\Controllers\WarrantyReportController;
 use App\Http\Controllers\CommissionController;
 use App\Http\Controllers\EarningController;
 use App\Http\Controllers\RetailerConnectionController;
-
+use App\Http\Controllers\TaskAuthController;
+use App\Http\Controllers\TaskTeamController;
+use App\Http\Controllers\TaskController;
+use App\Http\Controllers\BannerController;
+use App\Http\Controllers\TaskAiController;
+use App\Http\Controllers\AIWarrantyController;
+use App\Http\Controllers\TaskAiMessageTemplateController;
 
     Route::post('/send-warranty-test', [WhatsappController::class, 'sendWarrantyTest']);
 
@@ -63,17 +69,19 @@ use App\Http\Controllers\RetailerConnectionController;
         Route::post('/create-online-payment', [ZohoPaymentController::class, 'createOnlinePayment']);
         
          Route::get('/sync-invoices', [ZohoInvoiceController::class, 'syncAllInvoices']);
+         Route::get('/sync-payments', [ZohoPaymentController::class, 'syncAllPayments']);
 
     });
 
        Route::prefix('warranty')->group(function () {
     
         Route::post('/wlead/store', [WleadController::class, 'store']);
-        Route::post('/wlead/update/{id}', [WleadController::class, 'update']);
         Route::post('/wlead/login', [WleadController::class, 'login']);
         Route::get('/wlead/list', [WleadController::class, 'index']);
         Route::post('/wlead/status/{id}', [WleadController::class, 'updateStatus']);
         Route::get('/wlead/report', [WleadController::class, 'yearMonthReport']);
+        
+
     
     });
     
@@ -100,6 +108,16 @@ use App\Http\Controllers\RetailerConnectionController;
 
 
          Route::get('/employee-retailer-line-chart', [CompanyEmployeeController::class, 'retailerStatusSnapshot']);
+         Route::get('/sync-wallet-from-zoho', [CompanyController::class, 'syncZohoWalletBalance']);
+         
+        Route::post('/create-warranty-with-credit', [WarrantyController::class, 'createDeviceWithInvoiceAndCredit']);
+
+        Route::get('/retailer-transactions/{company_id}/{retailer_id}', 
+            [WarrantyController::class, 'getRetailerTransactions']);
+            
+
+            
+         Route::get('payment-invoices/{company_id}/{payment_id}', [WarrantyController::class, 'getInvoicesAgainstPayment']);
 
     });
     
@@ -124,11 +142,21 @@ use App\Http\Controllers\RetailerConnectionController;
     Route::get('/common/get-users', [CommonUpdateController::class, 'getCompanies']);
     Route::post('/common/generate-user-code', [CommonUpdateController::class, 'generateUserCode']);
 
+    Route::post('/common/send-otp', [CommonAuthController::class, 'sendCompanyOtp']);
+    Route::post('/common/verify-otp', [CommonAuthController::class, 'verifyCompanyOtp']);
+
+
+
     Route::post('/common/logout', [CommonAuthController::class, 'logout']);
     Route::get('/common/logout-status/{id}', [CommonAuthController::class, 'getLogoutStatus']);
     
     Route::post('/company/update-fields/{id}', [CommonUpdateController::class, 'updateDynamicFieldsCompany']);
     Route::get('/company/{companyId}/api-logs', [CommonUpdateController::class, 'getCompanyApiLogs']);
+    
+    Route::post('/common/set-mpin', [CommonAuthController::class, 'setMpin']);
+    Route::post('/common/login-mpin', [CommonAuthController::class, 'loginWithMpin']);
+
+
 
     Route::get('/badges', [WBadgeController::class, 'index']);
     Route::get('/badges/{id}', [WBadgeController::class, 'show']);
@@ -154,6 +182,14 @@ use App\Http\Controllers\RetailerConnectionController;
 
 
     Route::prefix('warranty')->group(function () {
+        
+        
+    Route::post('/create-warranty-with-credit', [WarrantyController::class, 'createDeviceWithInvoiceAndCredit']);
+
+
+    Route::post('/ai/warranty', [AIWarrantyController::class, 'ask']);
+
+
         Route::post('/create-brand', [WarrantyController::class, 'createBrand']);
         Route::post('/update-brand/{id}', [WarrantyController::class, 'updateBrand']);
         Route::get('/get-brands', [WarrantyController::class, 'getBrands']);
@@ -180,8 +216,11 @@ use App\Http\Controllers\RetailerConnectionController;
         Route::get('/products-with-categories', [WarrantyController::class, 'getProductsWithCategories']);
     
         Route::post('/price-templates', [WarrantyController::class, 'addPriceTemplate']);
+        Route::post('/update-price-template/{id}', [WarrantyController::class, 'updatePriceTemplate']);
         Route::get('/price-templates', [WarrantyController::class, 'getPriceTemplates']);
         Route::post('/matching-price-templates', [WarrantyController::class, 'getMatchingPriceTemplates']);
+        
+        Route::get('/price-report', [WarrantyController::class, 'priceReport']);
     
         Route::post('/create-customer-new', [WCustomerController::class, 'createCustomerNew']);
         Route::post('/create-warranty', [WarrantyController::class, 'createDevice']);
@@ -229,6 +268,8 @@ use App\Http\Controllers\RetailerConnectionController;
         Route::post('/customer/send-email-otp', [WCustomerController::class, 'sendCustomerEmailOtp']);
         Route::post('/customer/verify-email-otp', [WCustomerController::class, 'verifyCustomerEmailOtp']);
         Route::post('/customer/auth/google', [CommonAuthController::class, 'googleLoginCustomer']);
+
+        Route::post('/company/auth/google', [CommonAuthController::class, 'googleLoginCompany']);
 
 
         Route::post('claim/raise', [WarrantyClaimController::class, 'raiseClaim']);
@@ -291,12 +332,12 @@ use App\Http\Controllers\RetailerConnectionController;
       Route::get('/charts/product-revenue-share', [WarrantyReportController::class, 'productRevenueShare']);
       
       
-    Route::get('/charts/geography-revenue', [WarrantyReportController::class, 'geographyRevenue']);
+      Route::get('/charts/geography-revenue', [WarrantyReportController::class, 'geographyRevenue']);
 
-    Route::get('commission-dashboard', [CommissionController::class, 'dashboard']);
+      Route::get('commission-dashboard', [CommissionController::class, 'dashboard']);
     
-    Route::post('retailer-connection', [RetailerConnectionController::class, 'store']);
-    Route::get('retailer-connection', [RetailerConnectionController::class, 'index']);
+      Route::post('retailer-connection', [RetailerConnectionController::class, 'store']);
+      Route::get('retailer-connection', [RetailerConnectionController::class, 'index']);
     
     
     Route::get('assigned-retailers', [CompanyEmployeeController::class, 'assignedRetailers']);
@@ -305,7 +346,18 @@ use App\Http\Controllers\RetailerConnectionController;
 
     Route::get('/company-map-dashboard', [CompanyController::class, 'dashboardCounts']);
 
- Route::get('/top-selling-retailers', [WarrantyReportController::class, 'topSellingRetailers']);
+    Route::get('/top-selling-retailers', [WarrantyReportController::class, 'topSellingRetailers']);
+    
+
+        
+            Route::post('create-banner/',[BannerController::class,'createBanner']);
+            Route::put('update-banner/{id}',[BannerController::class,'updateBanner']);
+            Route::get('get-banner/',[BannerController::class,'listBanners']);
+            Route::patch('banner-status/{id}/status',[BannerController::class,'changeStatus']);
+            Route::delete('delete-banner/{id}',[BannerController::class,'deleteBanner']);
+        
+            Route::get('get-features', [WarrantyController::class,'getCoverageByType']);
+
     });
 
     Route::prefix('warrantybuilder')->group(function () {
@@ -367,15 +419,67 @@ use App\Http\Controllers\RetailerConnectionController;
     });
 
 
+    Route::prefix('task')->group(function () {
+    
+            Route::post('/send-otp',[TaskAuthController::class, 'sendCompanyOtp']);
+            Route::post('/verify-otp',[TaskAuthController::class, 'verifyCompanyOtp']);
+            
+            Route::post('/add-user', [TaskAuthController::class, 'addUser']);
+            Route::put('/update-user/{id}', [TaskAuthController::class, 'updateUser']);
+          
+            Route::patch('/task-users/{id}/status', [TaskAuthController::class, 'changeStatus']);
+            
+            Route::post('/upload-picture', [TaskAuthController::class, 'uploadPicture']);
+            
+            Route::get('/all-users', [TaskAuthController::class, 'listUsers']);
+            
+            Route::get('/get-user-by-id/{id}', [TaskAuthController::class, 'getUserById']);
+            Route::post('/create-team', [TaskTeamController::class, 'createTeam']);
+            Route::get('/get-teams', [TaskTeamController::class, 'listTeams']);
+            Route::get('/get-teams-by-id/{id}', [TaskTeamController::class, 'getTeamById']);
+            Route::put('/update-team/{id}', [TaskTeamController::class, 'updateTeam']);
+            
+            
+            Route::delete('/delete-team/{id}', [TaskTeamController::class, 'deleteTeam']);       
+            Route::patch('/restore-team/{id}/restore', [TaskTeamController::class, 'restoreTeam']);
+            
+            Route::post('/create-task',[TaskController::class,'createTask']);
+            Route::put('/update-task/{id}',[TaskController::class,'updateTask']);
+            Route::post('/add-task-remark',[TaskController::class,'addRemark']);
+            Route::get('/get-tasks',[TaskController::class,'listTasks']);
+            Route::get('/dashboard', [TaskController::class, 'taskDashboard']);
+            Route::post('/ai/task', [TaskAiController::class, 'ask']);
+            Route::post('/{id}/read', [TaskController::class, 'markAsRead']);
+            Route::get('/task-chart', [TaskController::class, 'taskChart']);
+            Route::get('/manager-task-stats', [TaskController::class, 'managerTaskStats']);
+            Route::get('/team-member-performances', [TaskController::class, 'teamMemberPerformance']);
 
+            Route::get('/calendar-summary', [TaskController::class, 'taskCalendarSummary']);
+            Route::get('/calendar-tasks', [TaskController::class, 'taskCalendarTasks']);
+            Route::get('/employee-performances', [TaskController::class, 'employeeTaskChart']);
+            Route::get('/performance-meter', [TaskTeamController::class, 'avgPerformance']);
+           
+           
+           Route::prefix('ai-templates')->group(function () {
 
-Route::get('/test-mail', function () {
-    \Mail::raw('Mail test OK', function ($msg) {
-        $msg->to('indresh@goelectronix.com')
-            ->subject('Mail Test');
+                Route::get('/get-templates', [TaskAiMessageTemplateController::class, 'index']);
+                Route::post('/store', [TaskAiMessageTemplateController::class, 'store']);
+                Route::get('get-template-by-id/{id}', [TaskAiMessageTemplateController::class, 'show']);
+                Route::post('/update-template/{id}', [TaskAiMessageTemplateController::class, 'update']);
+                Route::delete('/delete-template/{id}', [TaskAiMessageTemplateController::class, 'destroy']);
+            
+            });
+
     });
-
-    return 'Mail sent';
-});
+    
+    
+    Route::get('/test-mail', function () {
+        \Mail::raw('Mail test OK', function ($msg) {
+            $msg->to('indresh@goelectronix.com')
+                ->subject('Mail Test');
+        });
+    
+        return 'Mail sent';
+    });
 
 

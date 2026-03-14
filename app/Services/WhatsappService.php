@@ -16,11 +16,11 @@ class WhatsappService
         if (!$device->customer || empty($device->customer->mobile)) {
             throw new \Exception('Customer mobile missing');
         }
-
+/*
         if (empty($device->certificate_link)) {
             throw new \Exception('Certificate link missing');
         }
-
+*/
         $destination = '91' . ltrim($device->customer->mobile, '0');
 
         $companyDetails = Company::find($device->company_id);

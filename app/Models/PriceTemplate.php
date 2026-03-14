@@ -21,15 +21,18 @@ class PriceTemplate extends Model
         'company_id',
         'product_price',
         'is_fixed',
-        'is_percent'
+        'is_percent',
+        'product_type'
     ];
 
     public function warrantyProduct()
     {
         return $this->belongsTo(WarrantyProduct::class);
     }
-    public function product()
-{
-    return $this->belongsTo(WarrantyProduct::class, 'warranty_product_id');
-}
+        public function product()
+    {
+        return $this->belongsTo(WarrantyProduct::class, 'warranty_product_id');
+    }
+
+
 }

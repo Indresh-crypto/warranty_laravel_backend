@@ -7,6 +7,8 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Cache;
 use App\Mail\UniversalErrorMail;
+use App\Http\Middleware\CompanyApiAuth;
+
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -24,6 +26,10 @@ return Application::configure(basePath: dirname(__DIR__))
         
           $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
 
+          $middleware->alias([
+                'company.auth' => CompanyApiAuth::class,
+            ]);
+    
 
     })
     ->withExceptions(function (Exceptions $exceptions): void {

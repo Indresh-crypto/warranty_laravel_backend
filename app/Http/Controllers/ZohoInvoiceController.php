@@ -120,6 +120,7 @@ class ZohoInvoiceController extends Controller
             return response()->json(['errors' => $validator->errors()], 422);
         }
     
+     
         $query = ZohoInvoice::query()->select([
             'id',
             'invoice_id',
@@ -139,20 +140,16 @@ class ZohoInvoiceController extends Controller
             'invoice_date',
             'created_at',
             'updated_at',
-            'zoho_json', 
+            'zoho_json', // used internally only (removed later)
         ]);
     
         /**
-         * 🔹 Direct filters
+         * Direct filters
          */
         if ($request->company_id) {
             $query->where('org_id', $request->company_id);
         }
     
-       if ($request->org_code) {
-            $query->where('org_code', $request->org_code);
-        }
-        
         if ($request->user_id) {
             $query->where('user_id', $request->user_id);
         }
@@ -164,15 +161,10 @@ class ZohoInvoiceController extends Controller
         if ($request->contact_id) {
             $query->where('contact_id', 'like', "%{$request->contact_id}%");
         }
-          if ($request->invoice_number) {
-            $query->where('invoice_number', 'like', "%{$request->invoice_number}%");
-        }
     
-     if ($request->invoice_status) {
-            $query->where('invoice_status', 'like', "%{$request->invoice_status}%");
-        }
-    
-      
+        /**
+         *  Flag filters (FAST – uses DB columns)
+         */
         if ($request->flag === 'due_today') {
             $query->whereDate('due_date', Carbon::today());
         }
@@ -1031,33 +1023,44 @@ class ZohoInvoiceController extends Controller
     
                 $rows = [];
     
-                foreach ($body['invoices'] as $invoice) {
-                    $retailer = $retailers[$invoice['customer_id']] ?? null;
-    
-                    $rows[] = [
-                        'invoice_id'     => (string) $invoice['invoice_id'],
-                        'contact_id'     => $invoice['customer_id'] ?? null,
-                        'zoho_json'      => json_encode($invoice),
-                        'org_id'         => $company->id,
-    
-                        'user_id'        => $retailer->id ?? null,
-                        'org_code'       => $retailer->company_code ?? null,
-                        'org_name'       => $retailer->business_name ?? null,
-    
-                        'company_id'     => $request->company_id,
-                        'invoice_status' => $invoice['status'] ?? null,
-                        'invoice_date'   => $invoice['date'] ?? null,
-                        'due_date'       => $invoice['due_date'] ?? null,
-                        'payment_date'   => $invoice['last_payment_date'] ?? null,
-                        'invoice_amount' => $invoice['total'] ?? 0,
-                        'balance_amount' => $invoice['balance'] ?? 0,
-                        'invoice_number' => $invoice['invoice_number'] ?? null,
-                        'invoice_url'    => $invoice['invoice_url'] ?? null,
-    
-                        'created_at'     => now(),
-                        'updated_at'     => now(),
-                    ];
-                }
+               foreach ($body['invoices'] as $invoice) {
+
+    $retailer = $retailers[$invoice['customer_id']] ?? null;
+
+    $rows[] = [
+        'invoice_id'     => (string) $invoice['invoice_id'],
+        'contact_id'     => $invoice['customer_id'] ?? null,
+        'zoho_json'      => json_encode($invoice),
+        'org_id'         => $company->id,
+
+        'user_id'        => $retailer->id ?? null,
+        'org_code'       => $retailer->company_code ?? null,
+        'org_name'       => $retailer->business_name ?? null,
+
+        'company_id'     => $request->company_id,
+        'invoice_status' => $invoice['status'] ?? null,
+        'invoice_date'   => $invoice['date'] ?? null,
+        'due_date'       => $invoice['due_date'] ?? null,
+        'payment_date'   => $invoice['last_payment_date'] ?? null,
+        'invoice_amount' => $invoice['total'] ?? 0,
+        'balance_amount' => $invoice['balance'] ?? 0,
+        'invoice_number' => $invoice['invoice_number'] ?? null,
+        'invoice_url'    => $invoice['invoice_url'] ?? null,
+
+        'created_at'     => now(),
+        'updated_at'     => now(),
+    ];
+
+    /**  Update devices */
+    WDevice::where('invoice_id', $invoice['invoice_id'])
+        ->update([
+            'invoice_status'       => $invoice['status'] ?? null,
+            'invoice_created_date' => $invoice['date'] ?? null,
+            'invoice_json'         => json_encode($invoice),
+            'payment_status'       => ($invoice['balance'] ?? 0) == 0 ? 1 : 0,
+            'paid_at'              => $invoice['last_payment_date'] ?? null,
+        ]);
+}
     
                 /** 🔥 UPSERT (safe re-sync) */
                 ZohoInvoice::upsert(

@@ -91,7 +91,15 @@ class Company extends Model implements CanResetPassword
         'title',
         'is_password_changed',
         'created_by_id',
-        'created_by_name'
+        'created_by_name',
+        'otp_expires_at',
+        'm_pin',
+        'is_mpin_active',
+        'wallet_balance',
+        'last_update_balance_at',
+        'zoho_receivable_balance',
+        'zoho_unused_credit_balance',
+        'zoho_last_sync_at'
     ];
 
 

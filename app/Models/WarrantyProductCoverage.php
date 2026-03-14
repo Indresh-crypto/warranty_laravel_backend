@@ -15,7 +15,9 @@ class WarrantyProductCoverage extends Model
         'warranty_product_id',
         'title',
         'description',
-        'status'
+        'status',
+        'product_type',
+        'exclusions'
     ];
 
     public function product()
