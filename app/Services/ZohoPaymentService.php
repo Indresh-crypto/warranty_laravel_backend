@@ -1,5 +1,5 @@
 <?php
-
+namespace App\Services;
 class ZohoPaymentService
 {
     public function createPayment($invoiceId, $payload)

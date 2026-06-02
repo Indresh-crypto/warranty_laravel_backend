@@ -6,14 +6,24 @@ use Illuminate\Notifications\Notifiable;
 use Illuminate\Contracts\Auth\CanResetPassword;
 use Illuminate\Auth\Passwords\CanResetPassword as ResetPasswordTrait;
 use Illuminate\Auth\Notifications\ResetPassword;
-
+use Laravel\Sanctum\HasApiTokens;
 
 class Company extends Model implements CanResetPassword
 {
 
- use Notifiable, ResetPasswordTrait;
+ use Notifiable, ResetPasswordTrait, HasApiTokens;
  
-    protected $hidden = ['password'];
+   protected $hidden = [
+        'password',
+    
+        // Zoho sensitive data
+      //  'zoho_access_token',
+      //  'zoho_client_id',
+//'zoho_client_secret',
+     //   'zoho_redirect_uri',
+     //   'zoho_refresh_token'
+    ];
+
 
     protected $table = 'companies';
 
@@ -99,7 +109,18 @@ class Company extends Model implements CanResetPassword
         'last_update_balance_at',
         'zoho_receivable_balance',
         'zoho_unused_credit_balance',
-        'zoho_last_sync_at'
+        'zoho_last_sync_at',
+        'allow_wallet',
+        'is_subscribed',
+        'catalog',
+        'last_sold_at',
+        'flag'
+    ];
+
+    protected $casts = [
+        'pan_json' => 'array',
+        'gst_json' => 'array',
+        'bank_json' => 'array',
     ];
 
 
@@ -119,7 +140,7 @@ class Company extends Model implements CanResetPassword
         return $this->contact_email;
     }
 
-    // ✅ Explicitly send reset notification
+    // Explicitly send reset notification
     public function sendPasswordResetNotification($token)
     {
         $this->notify(new ResetPassword($token));
@@ -129,5 +150,42 @@ class Company extends Model implements CanResetPassword
     public function retailerConnections()
     {
         return $this->hasMany(RetailerConnection::class, 'retailer_id');
+    }
+    public function devices()
+    {
+        return $this->hasMany(WDevice::class, 'company_id');
+    }
+    
+    public function updateVerificationData($type, $pan, $response)
+    {
+        switch ($type) {
+    
+            case 'pan':
+                $this->pan_verified = 1;
+                $this->pan_json = $response;
+                $this->pan = $pan;
+                break;
+    
+            case 'gst':
+                $this->gst_verified = 1;
+                $this->gst_json = $response;
+                break;
+    
+            case 'bank':
+                $this->bank_verified = 1;
+                $this->bank_json = $response;
+                break;
+        }
+    
+        $this->save();
+    }
+    
+    public function parent()
+    {
+        return $this->belongsTo(Company::class, 'created_by_id');
+    }
+    public function wDevices()
+    {
+        return $this->hasMany(WDevice::class, 'company_id');
     }
 }

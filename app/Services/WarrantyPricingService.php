@@ -117,7 +117,7 @@ class WarrantyPricingService
 
         $retailerPending = max(
             0,
-            $productPrice - ($retailerPayout + $employeePayout)
+            $productPrice - ($retailerPayout)
         );
 
         Log::info('PRICING_CALCULATED', [

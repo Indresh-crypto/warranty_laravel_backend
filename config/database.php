@@ -62,7 +62,23 @@ return [
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
         ],
+        
+         'org_mysql' => [
+            'driver' => 'mysql',
+            'host' => env('DB_HOST'),
+            'database' => env('DB_SECOND_DATABASE'),
+            'username' => env('DB_SECOND_USERNAME'),
+            'password' => env('DB_SECOND_PASSWORD'),
+        ],
 
+        'org_uat_mysql' => [
+            'driver' => 'mysql',
+            'host' => env('DB_HOST'),
+            'database' => env('DB_UAT_DATABASE'),
+            'username' => env('DB_UAT_USERNAME'),
+            'password' => env('DB_UAT_PASSWORD'),
+        ],
+    
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),

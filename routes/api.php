@@ -47,15 +47,93 @@ use App\Http\Controllers\BannerController;
 use App\Http\Controllers\TaskAiController;
 use App\Http\Controllers\AIWarrantyController;
 use App\Http\Controllers\TaskAiMessageTemplateController;
+use App\Http\Controllers\TaskNotificationController;
+use App\Http\Controllers\WhatsappWebhookController;
+use App\Http\Controllers\TaskChatController;
+use App\Http\Controllers\TaskTypeController;
+use App\Http\Controllers\OrgUserMasterController;
+use App\Http\Controllers\AnalyticsController;
 
+use Illuminate\Support\Facades\Broadcast;
+    
+use App\Services\WhatsappService;
+use App\Models\Company;
+use App\Models\WDevice;
+
+use App\Jobs\WarrantyPaymentFlowJob;
+
+use App\Jobs\SendRetailerWonWhatsapp;
+use App\Events\TaskChatTyping;
+use App\Http\Controllers\SubscribedPackageController;
+use App\Http\Controllers\CashfreeController;
+use App\Http\Controllers\EmailTemplateController;
+use App\Http\Controllers\CandidateController;
+
+use App\Http\Controllers\PublicPackageController;
+use App\Http\Controllers\EmailTrackingController;
+use App\Http\Controllers\SalesReportController;
+
+use App\Http\Controllers\WLeadRemarkController;
+
+use Illuminate\Support\Facades\DB;
+
+
+
+Route::options('{any}', function () {
+    return response()->json([], 200);
+})->where('any', '.*');
+
+
+Route::prefix('candidates')->group(function () {
+    Route::get('/',               [CandidateController::class, 'index']);
+    Route::post('/import',        [CandidateController::class, 'import']);
+    Route::post('/send-whatsapp', [CandidateController::class, 'sendWhatsapp']);
+});
+
+    Route::post('/razorpay/webhook', [RazorpayWebhookController::class, 'handle']);
+
+
+
+Route::prefix('email-template')->group(function () {
+
+    Route::post('/create', [EmailTemplateController::class, 'store']);
+    Route::put('/update/{id}', [EmailTemplateController::class, 'update']);
+    Route::patch('/status/{id}', [EmailTemplateController::class, 'changeStatus']);
+    Route::get('/mapped-templates', [EmailTemplateController::class, 'mappedTemplates']);
+
+    Route::post('/mapping', [EmailTemplateController::class, 'addMapping']);
+    Route::post('/bulk-mapping', [EmailTemplateController::class, 'bulkMapping']);
+
+    Route::get('/preview/{id}', [EmailTemplateController::class, 'preview']);
+    Route::post('/send-test', [EmailTemplateController::class, 'sendTest']);
+    Route::get('/tables', [EmailTemplateController::class, 'getTables']);
+    Route::get('/columns/{table}', [EmailTemplateController::class, 'getColumns']);
+    Route::get('/list', [EmailTemplateController::class, 'index']);
+    Route::delete('/delete/{id}', [EmailTemplateController::class, 'destroy']);
+});
+
+Route::post('/uni-signup', [OrgUserMasterController::class, 'commonSignup']);
+Route::post('/uni-create-zoho-contact', [OrgUserMasterController::class, 'createContact']);
+
+Route::post('/verify-kyc', [CashfreeController::class, 'verify']);
+
+Route::post('/verify-kyc-global', [CashfreeController::class, 'verifyGlobal']);
+
+
+Route::get('/truncate-chat', [TaskChatController::class, 'truncateChatTables']);
+
+Route::post('/update-zoho-access-token',[ZohoCustomerController::class, 'updateZohoAccessTokenFromApi']);
+
+
+Broadcast::routes(['middleware' => []]);
     Route::post('/send-warranty-test', [WhatsappController::class, 'sendWarrantyTest']);
-
+    Route::post('/test-invoice-whatsapp', [WhatsappController::class, 'testInvoiceWhatsapp']);
 
     Route::prefix('zoho')->group(function () {
         Route::get('/update-token', [ZohoCustomerController::class, 'updateZohoAccessToken']);
+        
         Route::post('/zoho-users', [ZohoCustomerController::class, 'signupUser']);
         Route::get('/fetch-contacts', [ZohoContactController::class, 'fetchContacts']);
-
         Route::post('/create-contact', [ZohoCustomerController::class, 'createContact']);
         Route::get('/get-contacts', [ZohoCustomerController::class, 'getZohoContacts']);
         Route::post('/create-item', [ZohoItemController::class, 'createZohoItem']);
@@ -70,16 +148,35 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
         
          Route::get('/sync-invoices', [ZohoInvoiceController::class, 'syncAllInvoices']);
          Route::get('/sync-payments', [ZohoPaymentController::class, 'syncAllPayments']);
+         
+        Route::get('/send-overdue-invoices-wa', [ZohoInvoiceController::class, 'getOverdueInvoicesWa']);
+
 
     });
 
        Route::prefix('warranty')->group(function () {
+    
+    
+        Route::post('/add-wallet-balance',[CompanyController::class, 'paymentWalletBalance']);
+        Route::get('/analytics/dashboard', [AnalyticsController::class, 'dashboard']);
+        Route::get('/sales/report', [SalesReportController::class, 'report']);
+        Route::get('/sales/compare', [SalesReportController::class, 'compare']);
+
+    
+        Route::get('/email/open/{id}', [EmailTrackingController::class, 'track']);
+    
+        Route::get('/product-sales-report', [WarrantyController::class, 'productSalesReport']);
+        
+        Route::get('/geo-data', [CompanyController::class, 'getGeoData']);
+    
+        Route::get('/onboarding-stats', [CompanyController::class, 'getOnboardingStats']);
     
         Route::post('/wlead/store', [WleadController::class, 'store']);
         Route::post('/wlead/login', [WleadController::class, 'login']);
         Route::get('/wlead/list', [WleadController::class, 'index']);
         Route::post('/wlead/status/{id}', [WleadController::class, 'updateStatus']);
         Route::get('/wlead/report', [WleadController::class, 'yearMonthReport']);
+        Route::post('/wlead/update/{id}', [WleadController::class, 'update']);
         
 
     
@@ -112,12 +209,17 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
          
         Route::post('/create-warranty-with-credit', [WarrantyController::class, 'createDeviceWithInvoiceAndCredit']);
 
-        Route::get('/retailer-transactions/{company_id}/{retailer_id}', 
-            [WarrantyController::class, 'getRetailerTransactions']);
+        Route::get('/retailer-transactions/{company_id}/{retailer_id}',  [WarrantyController::class, 'getRetailerTransactions']);
             
 
             
-         Route::get('payment-invoices/{company_id}/{payment_id}', [WarrantyController::class, 'getInvoicesAgainstPayment']);
+        Route::get('payment-invoices/{company_id}/{payment_id}', [WarrantyController::class, 'getInvoicesAgainstPayment']);
+        Route::get('retailer-warranty-sales-report', [CompanyController::class, 'retailerSalesReport']);
+
+        Route::get('promoter-warranty-sales-report', [CompanyController::class, 'promoterSalesReport']);
+
+        Route::get('distributor-warranty-sales-report', [CompanyController::class, 'distributorSalesReport']);
+
 
     });
     
@@ -184,12 +286,26 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
     Route::prefix('warranty')->group(function () {
         
         
-    Route::post('/create-warranty-with-credit', [WarrantyController::class, 'createDeviceWithInvoiceAndCredit']);
+         Route::post('/remark/add', [WLeadRemarkController::class, 'addRemark']);
+    
+        Route::get('/remarks/{lead_id}', [WLeadRemarkController::class, 'getRemarks']);
+    
+        Route::delete('/remark/delete/{id}', [WLeadRemarkController::class, 'deleteRemark']);
+        
+        
+        Route::get('/check-retailer-active-plan', [SubscribedPackageController::class, 'checkActivePlan']);
 
 
-    Route::post('/ai/warranty', [AIWarrantyController::class, 'ask']);
+        Route::post('/create-warranty-with-credit', [WarrantyController::class, 'createDeviceWithInvoiceAndCredit']);
+        Route::post('/create-warranty-with-subscription', [WarrantyController::class, 'createDeviceWithInvoiceAndSubscription']);
 
+        Route::post('/buy-subscription-with-credit', [SubscribedPackageController::class, 'buyPackageWithCredit']);
 
+        Route::post('/create-warranty-by-customer', [WarrantyController::class, 'createDeviceByCustomer']);
+
+        Route::post('/ai/warranty', [AIWarrantyController::class, 'ask']);
+
+        Route::get('subscriptions', [SubscribedPackageController::class, 'index']);
         Route::post('/create-brand', [WarrantyController::class, 'createBrand']);
         Route::post('/update-brand/{id}', [WarrantyController::class, 'updateBrand']);
         Route::get('/get-brands', [WarrantyController::class, 'getBrands']);
@@ -220,9 +336,17 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
         Route::get('/price-templates', [WarrantyController::class, 'getPriceTemplates']);
         Route::post('/matching-price-templates', [WarrantyController::class, 'getMatchingPriceTemplates']);
         
+        Route::post('/public-price-templates', [PublicPackageController::class, 'getPublicPriceTemplates']);
+
+
         Route::get('/price-report', [WarrantyController::class, 'priceReport']);
     
         Route::post('/create-customer-new', [WCustomerController::class, 'createCustomerNew']);
+        
+        Route::post('/send-customer-wa-otp', [WCustomerController::class, 'sendCustomerWaOtp']);
+        Route::post('/verify-customer-wa-otp', [WCustomerController::class, 'verifyCustomerOtp']);
+
+         
         Route::post('/create-warranty', [WarrantyController::class, 'createDevice']);
         Route::put('/update-customer/{id}', [WarrantyController::class, 'updateCustomer']);
         Route::get('/get-customers', [WCustomerController::class, 'getCustomers']);
@@ -336,6 +460,26 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
 
       Route::get('commission-dashboard', [CommissionController::class, 'dashboard']);
     
+      Route::get('payouts/current-month', [CommissionController::class, 'currentMonthPayouts']);
+      
+      Route::get('payouts/product-wise', [CommissionController::class, 'payoutProductDetails']);
+
+      Route::get('payouts/cp-payouts', [CommissionController::class, 'mcpChildPayouts']);
+
+      Route::get('payout-warranties', [CommissionController::class, 'payoutRetailerDetails']);
+
+      Route::get('payout-unbilled', [CommissionController::class, 'unbilledPayouts']);
+ 
+       Route::get('payout-billed', [CommissionController::class, 'billedPayouts']);
+
+    
+        Route::post('/payout-request', [CommissionController::class, 'requestPayoutTransfer']);
+        Route::post('/payout-verify-otp', [CommissionController::class, 'verifyPayoutOtp']);
+        Route::post('/payout-approve', [CommissionController::class, 'approvePayout']);
+        Route::post('/payout-transfer', [CommissionController::class, 'markTransferred']);
+
+      Route::get('payout-statement', [CommissionController::class, 'payoutStatement']);
+
       Route::post('retailer-connection', [RetailerConnectionController::class, 'store']);
       Route::get('retailer-connection', [RetailerConnectionController::class, 'index']);
     
@@ -343,6 +487,9 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
     Route::get('assigned-retailers', [CompanyEmployeeController::class, 'assignedRetailers']);
     Route::get('connected-retailers', [CompanyEmployeeController::class, 'connectedRetailers']);
     Route::get('using-retailers', [CompanyEmployeeController::class, 'usingProductRetailers']);
+    
+    Route::post('send-employee-otp', [CompanyEmployeeController::class, 'sendCompanyOtp']);
+    Route::post('verify-employee-otp', [CompanyEmployeeController::class, 'verifyCompanyOtp']);
 
     Route::get('/company-map-dashboard', [CompanyController::class, 'dashboardCounts']);
 
@@ -357,7 +504,21 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
             Route::delete('delete-banner/{id}',[BannerController::class,'deleteBanner']);
         
             Route::get('get-features', [WarrantyController::class,'getCoverageByType']);
+            
+            
+            Route::post('/template-images', [CompanyController::class, 'storeTemplateImage']);
 
+            Route::get('/template-images/{company_id}', [CompanyController::class, 'getTemplateImage']);
+
+            Route::patch('/template-images/status/{id}', [CompanyController::class, 'updateTemplateImageStatus']);
+            
+            Route::delete('/template-images/{id}', [CompanyController::class, 'deleteTemplateImage']);
+            
+            
+            Route::post('/gupshup/send-message', [WhatsappWebhookController::class, 'optInAndSendMessage']);
+            Route::post('/webhook-inbound', [WhatsappWebhookController::class, 'handleWebhook']);
+            Route::get('/whatsapp-messages', [WhatsappWebhookController::class, 'getMessages']);
+    
     });
 
     Route::prefix('warrantybuilder')->group(function () {
@@ -399,7 +560,6 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
     Route::post('/phonepe/callback', [PhonePeController::class, 'callback']);
     Route::get('/phonepe/status/{txnId}', [PhonePeController::class, 'checkStatus']);
 
-    Route::post('/razorpay/webhook', [RazorpayWebhookController::class, 'handle']);
     
     
     Route::prefix('admin')->group(function () {
@@ -459,7 +619,15 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
             Route::get('/employee-performances', [TaskController::class, 'employeeTaskChart']);
             Route::get('/performance-meter', [TaskTeamController::class, 'avgPerformance']);
            
-           
+                       
+            Route::get('notifications/{userId}', [TaskNotificationController::class,'index']);
+            
+            Route::post('notifications/read/{id}', [TaskNotificationController::class,'markAsRead']);
+            
+            Route::post('notifications/read-all/{userId}', [TaskNotificationController::class,'markAllRead']);
+            
+            Route::get('notifications/unread/{userId}', [TaskNotificationController::class,'unreadCount']);
+            
            Route::prefix('ai-templates')->group(function () {
 
                 Route::get('/get-templates', [TaskAiMessageTemplateController::class, 'index']);
@@ -469,6 +637,33 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
                 Route::delete('/delete-template/{id}', [TaskAiMessageTemplateController::class, 'destroy']);
             
             });
+            
+            
+            Route::get('/task-types', [TaskTypeController::class, 'index']);
+            Route::post('/task-types', [TaskTypeController::class, 'store']);
+            Route::get('/task-types/{taskType}', [TaskTypeController::class, 'show']);
+            Route::put('/task-types/{taskType}', [TaskTypeController::class, 'update']);
+            Route::delete('/task-types/{taskType}', [TaskTypeController::class, 'destroy']);
+
+            Route::prefix('chat')->group(function(){
+
+            Route::get('conversations/{userId}',[TaskChatController::class,'conversations']);
+        
+            Route::get('messages/{conversationId}',[TaskChatController::class,'messages']);
+        
+            Route::post('send',[TaskChatController::class,'send']);
+            Route::post('read/{conversationId}/{userId}',[TaskChatController::class,'read']);
+        
+           Route::post('typing', [TaskChatController::class, 'typing']);
+           Route::post('/create', [TaskChatController::class, 'createConversation']);
+           Route::post('/users-with-chats', [TaskChatController::class, 'teamChatUsers']);
+           Route::post('/team-with-chats', [TaskChatController::class, 'teamChatList']);
+           Route::post('/update-last-seen', [TaskChatController::class, 'updateLastSeen']);
+           Route::post('/create-team-conversation/{teamId}', [TaskChatController::class, 'createTeamConversation']);
+           Route::post('/save-device-token', [TaskNotificationController::class, 'saveToken']);
+           Route::get('/task-search', [TaskChatController::class, 'searchTasks']);
+
+        });
 
     });
     
@@ -481,5 +676,131 @@ use App\Http\Controllers\TaskAiMessageTemplateController;
     
         return 'Mail sent';
     });
+    
+
+Route::get('/test-whatsapp', function () {
+
+    $retailer = Company::find(1);
+
+    if (!$retailer) {
+        return "Retailer not found";
+    }
+
+    // override mobile for testing
+    $retailer->contact_phone = "9039128100";
+
+    // dummy Zoho payment response
+    $zohoPayment = [
+        'payment_number' => 'RCPT-TEST-001',
+        'payment_id' => '460000000TEST123'
+    ];
+
+    $amount = 300;
+
+    // dummy Razorpay payment id
+    $razorpayId = 'pay_TEST123456';
+
+    app(WhatsappService::class)
+        ->sendRetailerAdvancePaymentSuccess(
+            $retailer,
+            $zohoPayment,
+            $amount,
+            $razorpayId
+        );
+
+    return "WhatsApp test sent successfully";
+});
 
 
+Route::get('/test-invoice-whatsapp', function () {
+
+    $device = WDevice::find(1); // testing device id
+
+    if (!$device) {
+        return "Device not found";
+    }
+
+    $retailer = Company::find($device->retailer_id);
+
+
+    if (!$retailer) {
+        return "Retailer not found";
+    }
+
+    // override mobile for testing
+    $retailer->contact_phone = "9039128100";
+
+    app(WhatsappService::class)
+        ->sendRetailerInvoiceSuccess($retailer, $device);
+
+    return "Invoice WhatsApp test sent";
+});
+
+
+
+Route::get('/test-retailer-wa', function () {
+
+    $device = \App\Models\WDevice::latest()->first();
+    $company = \App\Models\Company::find($device->retailer_id);
+
+    app(\App\Services\WhatsappService::class)
+        ->sendRetailerInvoiceSuccess($company, $device);
+
+    return "Retailer WA test sent";
+});
+
+
+Route::get('/test-warranty-flow', function () {
+
+    $payload = [
+
+        'payment_id'    => 'TESTPAY-' . time(),
+
+        'imei1'         => '123456789012345',
+
+        'product_id'    => 22,   // existing warranty product id
+        'company_id'    => 5927, // your company id
+        'retailer_id'   => 5982, // retailer id
+
+        'amount'        => 1000,
+
+        'w_customer_id' => 3,   // existing customer id
+        'model_id'      => 84,   // existing device model id
+
+        'imei2'         => null,
+        'serial'        => null,
+
+        'agent_id'      => null,
+        'created_by'    => 1,
+
+        'document_url'  => null,
+        'link1'         => null,
+        'link2'         => null
+    ];
+
+    \Log::info('TEST WARRANTY FLOW TRIGGERED', $payload);
+
+    WarrantyPaymentFlowJob::dispatch($payload);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Warranty job dispatched',
+        'payload' => $payload
+    ]);
+
+});
+
+
+Route::get('/test-retailer-whatsapp', function () {
+
+    $company = new Company();
+    $company->id = 1; // fake id for testing
+    $company->contact_phone = "9039128100";
+
+    SendRetailerWonWhatsapp::dispatch($company->id);
+
+    return response()->json([
+        'status' => true,
+        'message' => 'WhatsApp job dispatched'
+    ]);
+});

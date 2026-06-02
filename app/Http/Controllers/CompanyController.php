@@ -4,13 +4,17 @@ namespace App\Http\Controllers;
 
 use App\Models\Company;
 use App\Models\CompanyEmployee;
+use App\Models\TemplateImage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Password;
-
+use Carbon\Carbon;
+use App\Models\WDevice;
+use DB;
+use App\Jobs\AdvancePaymentJob;
 class CompanyController extends Controller
 {
     /**
@@ -39,7 +43,6 @@ class CompanyController extends Controller
             'contact_phone' => $request->contact_phone,
             'contact_email' => $request->contact_email,
             'password' => Hash::make($request->password),
-
             'address_line1' => $request->address_line1,
             'address_line2' => $request->address_line2,
             'city'          => $request->city,
@@ -62,9 +65,7 @@ class CompanyController extends Controller
         ],201);
     }
 
-    /**
-     * Company Login
-     */
+
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(),[
@@ -166,9 +167,15 @@ class CompanyController extends Controller
             ->when($request->status, function ($q) use ($request) {
                 $q->where('status', $request->status);
             })
-            ->when($request->domain, function ($q) use ($request) {
-                $q->where('domain', $request->domain);
+          
+          ->when($request->domain, function ($q) use ($request) {
+            
+                $q->where('domain', $request->domain)
+            
+                  ->where('role', 1);
+            
             })
+
     
             ->when($request->is_verified, function ($q) use ($request) {
                 $q->where('is_verified', $request->is_verified);
@@ -182,6 +189,10 @@ class CompanyController extends Controller
                 $q->where('user_type', $request->user_type);
             })
     
+            ->when($request->flag, function ($q) use ($request) {
+                $q->where('flag', $request->flag);
+            })
+            
             ->orderBy('id', 'desc')
             ->paginate($perPage);
     
@@ -357,7 +368,7 @@ public function sendResetLink(Request $request)
     ]);
 
     $status = Password::broker('companies')->sendResetLink([
-        'contact_email' => $request->email   // ✅ MUST MATCH COLUMN
+        'contact_email' => $request->email   // MUST MATCH COLUMN
     ]);
 
     return response()->json([
@@ -457,7 +468,7 @@ public function dashboardCounts(Request $request)
 public function syncZohoWalletBalance(Request $request)
 {
     $validator = Validator::make($request->all(), [
-        'company_id' => 'required|exists:companies,id', // Parent
+        'company_id' => 'required', // Parent
         'user_id'    => 'required|exists:companies,id', // Child (wallet owner)
     ]);
 
@@ -471,6 +482,7 @@ public function syncZohoWalletBalance(Request $request)
     /**
      * 🔹 Parent company (Zoho credentials holder)
      */
+    $request->company_id = 1;
     $parentCompany = Company::find($request->company_id);
 
     if (
@@ -508,6 +520,7 @@ public function syncZohoWalletBalance(Request $request)
                 ],
                 'query' => [
                     'organization_id' => $parentCompany->zoho_org_id,
+                 
                 ],
             ]
         );
@@ -522,10 +535,10 @@ public function syncZohoWalletBalance(Request $request)
             ], 404);
         }
 
-        // 🔥 Get unused credits
+        //  Get unused credits
         $walletBalance = $zohoContact['unused_credits_receivable_amount'] ?? 0;
 
-        // ✅ Update USER company wallet (NOT parent)
+        // Update USER company wallet (NOT parent)
         $userCompany->update([
             'wallet_balance' => $walletBalance,
             'last_update_balance_at' => now()
@@ -639,5 +652,655 @@ public function syncZohoWalletBalance(Request $request)
             'status' => true,
             'message' => 'Zoho balances synced successfully'
         ]);
+    }
+    
+     // Add Template Image
+    public function storeTemplateImage(Request $request)
+    {
+        $request->validate([
+            'link' => 'required|string',
+            'tag' => 'nullable|string',
+            'company_id' => 'required|integer'
+        ]);
+    
+        $image = TemplateImage::create([
+            'link' => $request->link,
+            'tag' => $request->tag,
+            'company_id' => $request->company_id,
+            'status' => 1
+        ]);
+    
+        return response()->json([
+            'status' => true,
+            'message' => 'Template Image Added Successfully',
+            'data' => $image
+        ]);
+    }
+
+
+    public function updateTemplateImageStatus(Request $request, $id)
+    {
+        $request->validate([
+            'status' => 'required|in:0,1'
+        ]);
+    
+        $image = TemplateImage::find($id);
+    
+        if (!$image) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Template image not found'
+            ], 404);
+        }
+    
+        $image->update([
+            'status' => $request->status
+        ]);
+    
+        return response()->json([
+            'status' => true,
+            'message' => 'Template image status updated successfully',
+            'data' => $image
+        ]);
+}
+
+    // Get All Images by Company
+    public function getTemplateImage($company_id)
+    {
+        $images = TemplateImage::where('company_id', $company_id)->get();
+
+        return response()->json([
+            'status' => true,
+            'data' => $images
+        ]);
+    }
+    
+    public function deleteTemplateImage($id)
+    {
+        $image = TemplateImage::find($id);
+    
+        if (!$image) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Template image not found'
+            ], 404);
+        }
+    
+        $image->delete(); // Permanent delete
+    
+        return response()->json([
+            'status' => true,
+            'message' => 'Template image deleted permanently'
+        ]);
+    }
+public function retailerSalesReport(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'company_id' => 'nullable',
+        'from_date'  => 'required|date',
+        'to_date'    => 'required|date',
+        'state'      => 'nullable|string',
+        'district'   => 'nullable|string',
+        'pincode'    => 'nullable|string',
+        'search'     => 'nullable|string',
+        'per_page'   => 'nullable|integer'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 422);
+    }
+
+    $fromDate = Carbon::parse($request->from_date)->startOfDay();
+    $toDate   = Carbon::parse($request->to_date)->endOfDay();
+    $perPage  = $request->per_page ?? 20;
+
+    // 1. Fetch Retailers (Optimized selection)
+    $retailers = Company::query()
+        ->where('role', 5)
+       // ->where('company_id', $request->company_id)
+        ->when($request->state, fn($q) => $q->where('state', $request->state))
+        ->when($request->district, fn($q) => $q->where('district', $request->district))
+        ->when($request->pincode, fn($q) => $q->where('pincode', $request->pincode))
+        ->when($request->search, function($q) use($request) {
+            $q->where(function($sub) use($request) {
+                $sub->where('business_name', 'like', '%' . $request->search . '%')
+                    ->orWhere('company_code', 'like', '%' . $request->search . '%');
+            });
+        })
+        ->select('id', 'business_name', 'company_code', 'state', 'district', 'pincode', 'created_at', 'contact_phone')
+        ->paginate($perPage);
+
+    // 2. Optimized Sales Query with Keying
+    $retailerIds = $retailers->pluck('id');
+
+    $sales = WDevice::query()
+        ->whereIn('retailer_id', $retailerIds)
+        ->whereBetween('created_at', [$fromDate, $toDate])
+        ->select(
+            'retailer_id',
+            DB::raw('DATE(created_at) as sale_date'),
+            DB::raw('COUNT(id) as sale_count'),
+            DB::raw('SUM(product_price) as sale_amount')
+        )
+        ->groupBy('retailer_id', 'sale_date')
+        ->get()
+        // Here is the magic: Group by retailer, THEN key each day by the date
+        ->groupBy('retailer_id')
+        ->map(fn($item) => $item->keyBy('sale_date'));
+
+    // 3. Generate Date Range once
+    $dates = [];
+    for ($date = $fromDate->copy(); $date->lte($toDate); $date->addDay()) {
+        $dates[] = $date->format('Y-m-d');
+    }
+
+    // 4. Transform Data efficiently
+    $data = $retailers->getCollection()->map(function($retailer) use ($sales, $dates) {
+        $retailerSales = $sales->get($retailer->id, collect());
+        
+        $activity = [];
+        foreach ($dates as $date) {
+            // Instant lookup instead of search
+            $sale = $retailerSales->get($date);
+            
+            $activity[$date] = [
+                'is_sale'     => (bool)$sale,
+                'sale_amount' => $sale->sale_amount ?? 0,
+                'sale_count'  => (int)($sale->sale_count ?? 0)
+            ];
+        }
+
+        return [
+            'retailer_id'   => $retailer->id,
+            'retailer_code' => $retailer->company_code,
+            'retailer_name' => $retailer->business_name,
+            'state'         => $retailer->state,
+            'district'      => $retailer->district,
+            'pincode'       => $retailer->pincode,
+            'onboard_date'  => $retailer->created_at,
+            'contact_phone' => $retailer->contact_phone,
+            'activity'      => $activity
+        ];
+    });
+
+    return response()->json([
+        'status'  => true,
+        'filters' => [
+            'from_date' => $fromDate->toDateString(),
+            'to_date'   => $toDate->toDateString()
+        ],
+        'pagination' => [
+            'current_page' => $retailers->currentPage(),
+            'last_page'    => $retailers->lastPage(),
+            'per_page'     => $retailers->perPage(),
+            'total'        => $retailers->total()
+        ],
+        'data' => $data
+    ]);
+}
+
+public function promoterSalesReport(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'company_id' => 'required|integer|exists:companies,id',
+        'from_date'  => 'required|date',
+        'to_date'    => 'required|date',
+        'state'      => 'nullable|string',
+        'district'   => 'nullable|string',
+        'pincode'    => 'nullable|string',
+        'search'     => 'nullable|string',
+        'per_page'   => 'nullable|integer'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 422);
+    }
+
+    $fromDate = Carbon::parse($request->from_date)->startOfDay();
+    $toDate   = Carbon::parse($request->to_date)->endOfDay();
+    $perPage  = $request->per_page ?? 20;
+
+    // 1. Fetch Retailers (Optimized selection)
+    $retailers = Company::query()
+        ->where('role', 6)
+        ->where('created_by_id', $request->retailer_id)
+        ->where('company_id', $request->company_id)
+        ->when($request->state, fn($q) => $q->where('state', $request->state))
+        ->when($request->district, fn($q) => $q->where('district', $request->district))
+        ->when($request->pincode, fn($q) => $q->where('pincode', $request->pincode))
+        ->when($request->search, function($q) use($request) {
+            $q->where(function($sub) use($request) {
+                $sub->where('business_name', 'like', '%' . $request->search . '%')
+                    ->orWhere('company_code', 'like', '%' . $request->search . '%');
+            });
+        })
+        ->select('id', 'business_name', 'company_code', 'state', 'district', 'pincode', 'created_at', 'contact_phone')
+        ->paginate($perPage);
+
+    // 2. Optimized Sales Query with Keying
+    $retailerIds = $retailers->pluck('id');
+
+    $sales = WDevice::query()
+        ->whereIn('promoter_id', $retailerIds)
+        ->whereBetween('created_at', [$fromDate, $toDate])
+        ->select(
+            'promoter_id',
+            DB::raw('DATE(created_at) as sale_date'),
+            DB::raw('COUNT(id) as sale_count'),
+            DB::raw('SUM(product_price) as sale_amount')
+        )
+        ->groupBy('promoter_id', 'sale_date')
+        ->get()
+        // Here is the magic: Group by retailer, THEN key each day by the date
+        ->groupBy('retailer_id')
+        ->map(fn($item) => $item->keyBy('sale_date'));
+
+    // 3. Generate Date Range once
+    $dates = [];
+    for ($date = $fromDate->copy(); $date->lte($toDate); $date->addDay()) {
+        $dates[] = $date->format('Y-m-d');
+    }
+
+    // 4. Transform Data efficiently
+    $data = $retailers->getCollection()->map(function($retailer) use ($sales, $dates) {
+        $retailerSales = $sales->get($retailer->id, collect());
+        
+        $activity = [];
+        foreach ($dates as $date) {
+            // Instant lookup instead of search
+            $sale = $retailerSales->get($date);
+            
+            $activity[$date] = [
+                'is_sale'     => (bool)$sale,
+                'sale_amount' => $sale->sale_amount ?? 0,
+                'sale_count'  => (int)($sale->sale_count ?? 0)
+            ];
+        }
+
+        return [
+            'promoter_id'   => $retailer->id,
+            'retailer_code' => $retailer->company_code,
+            'retailer_name' => $retailer->business_name,
+            'state'         => $retailer->state,
+            'district'      => $retailer->district,
+            'pincode'       => $retailer->pincode,
+            'onboard_date'  => $retailer->created_at,
+            'contact_phone' => $retailer->contact_phone,
+            'activity'      => $activity
+        ];
+    });
+
+    return response()->json([
+        'status'  => true,
+        'filters' => [
+            'from_date' => $fromDate->toDateString(),
+            'to_date'   => $toDate->toDateString()
+        ],
+        'pagination' => [
+            'current_page' => $retailers->currentPage(),
+            'last_page'    => $retailers->lastPage(),
+            'per_page'     => $retailers->perPage(),
+            'total'        => $retailers->total()
+        ],
+        'data' => $data
+    ]);
+}
+
+public function distributorSalesReport(Request $request)
+{
+    $validator = Validator::make($request->all(), [
+        'company_id' => 'required|integer|exists:companies,id',
+        'from_date'  => 'required|date',
+        'to_date'    => 'required|date',
+        'state'      => 'nullable|string',
+        'district'   => 'nullable|string',
+        'pincode'    => 'nullable|string',
+        'search'     => 'nullable|string',
+        'per_page'   => 'nullable|integer'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json(['errors' => $validator->errors()], 422);
+    }
+
+    $fromDate = Carbon::parse($request->from_date)->startOfDay();
+    $toDate   = Carbon::parse($request->to_date)->endOfDay();
+    $perPage  = $request->per_page ?? 20;
+
+    // 1. Fetch Retailers (Optimized selection)
+    $retailers = Company::query()
+        ->where('role', 4)
+        ->where('company_id', $request->company_id)
+        ->when($request->state, fn($q) => $q->where('state', $request->state))
+        ->when($request->district, fn($q) => $q->where('district', $request->district))
+        ->when($request->pincode, fn($q) => $q->where('pincode', $request->pincode))
+        ->when($request->search, function($q) use($request) {
+            $q->where(function($sub) use($request) {
+                $sub->where('business_name', 'like', '%' . $request->search . '%')
+                    ->orWhere('company_code', 'like', '%' . $request->search . '%');
+            });
+        })
+        ->select('id', 'business_name', 'company_code', 'state', 'district', 'pincode', 'created_at', 'contact_phone')
+        ->paginate($perPage);
+        
+
+    // 2. Optimized Sales Query with Keying
+    $retailerIds = $retailers->pluck('id');
+
+    $sales = WDevice::query()
+        ->whereIn('company_id', $retailerIds)
+        ->whereBetween('created_at', [$fromDate, $toDate])
+        ->select(
+            'company_id',
+            DB::raw('DATE(created_at) as sale_date'),
+            DB::raw('COUNT(id) as sale_count'),
+            DB::raw('SUM(product_price) as sale_amount')
+        )
+        ->groupBy('company_id', 'sale_date')
+        ->get()
+        // Here is the magic: Group by retailer, THEN key each day by the date
+        ->groupBy('retailer_id')
+        ->map(fn($item) => $item->keyBy('sale_date'));
+
+    // 3. Generate Date Range once
+    $dates = [];
+    for ($date = $fromDate->copy(); $date->lte($toDate); $date->addDay()) {
+        $dates[] = $date->format('Y-m-d');
+    }
+
+    // 4. Transform Data efficiently
+    $data = $retailers->getCollection()->map(function($retailer) use ($sales, $dates) {
+        $retailerSales = $sales->get($retailer->id, collect());
+        
+        $activity = [];
+        foreach ($dates as $date) {
+            // Instant lookup instead of search
+            $sale = $retailerSales->get($date);
+            
+            $activity[$date] = [
+                'is_sale'     => (bool)$sale,
+                'sale_amount' => $sale->sale_amount ?? 0,
+                'sale_count'  => (int)($sale->sale_count ?? 0)
+            ];
+        }
+
+        return [
+            'company_id'    => $retailer->id,
+            'retailer_code' => $retailer->company_code,
+            'retailer_name' => $retailer->business_name,
+            'state'         => $retailer->state,
+            'district'      => $retailer->district,
+            'pincode'       => $retailer->pincode,
+            'onboard_date'  => $retailer->created_at,
+            'contact_phone' => $retailer->contact_phone,
+            'activity'      => $activity
+        ];
+    });
+
+    return response()->json([
+        'status'  => true,
+        'filters' => [
+            'from_date' => $fromDate->toDateString(),
+            'to_date'   => $toDate->toDateString()
+        ],
+        'pagination' => [
+            'current_page' => $retailers->currentPage(),
+            'last_page'    => $retailers->lastPage(),
+            'per_page'     => $retailers->perPage(),
+            'total'        => $retailers->total()
+        ],
+        'data' => $data
+    ]);
+}
+public function getAgentsUnderCompany($companyId)
+{
+    return Company::where('company_id', $companyId)
+        ->where('role', 4)
+        ->pluck('id');
+}
+
+    public function getRetailersUnderCompany($companyId)
+    {
+        $agents = $this->getAgentsUnderCompany($companyId);
+    
+        return Company::where('role', 5)
+            ->where(function ($q) use ($companyId, $agents) {
+                $q->where('company_id', $companyId)
+                  ->orWhereIn('created_by_id', $agents);
+            })
+            ->pluck('id');
+    }
+
+    public function getPromotersUnderRetailers($retailerIds)
+    {
+        return Company::where('role', 6)
+            ->whereIn('senior_id', $retailerIds)
+            ->pluck('id');
+    }
+
+
+ public function getGeoData(Request $request)
+{
+    $query = Company::query()
+        ->whereNotNull('state')
+        ->whereNotNull('district')
+        ->whereNotNull('pincode');
+
+    //  Filters
+    if ($request->filled('agent_id')) {
+        $query->where('agent_id', $request->agent_id);
+    }
+
+    if ($request->filled('company_id')) {
+        $query->where('id', $request->company_id);
+    }
+
+    if ($request->filled('created_by_id')) {
+        $query->where('created_by_id', $request->created_by_id);
+    }
+
+    // Date filters
+    if ($request->filled('start_date')) {
+        $query->whereDate('created_at', '>=', $request->start_date);
+    }
+
+    if ($request->filled('end_date')) {
+        $query->whereDate('created_at', '<=', $request->end_date);
+    }
+
+    // 🔥 GROUPING (important change)
+    $rows = $query->selectRaw("
+            state,
+            district,
+            pincode,
+            city,
+            COUNT(*) as customers,
+            MAX(DATE(created_at)) as date
+        ")
+        ->groupBy('state', 'district', 'pincode', 'city')
+        ->orderBy('state')
+        ->get();
+
+    $result = [];
+
+    foreach ($rows as $row) {
+
+        $state = $row->state;
+        $district = $row->district;
+
+        if (!isset($result[$state])) {
+            $result[$state] = ['districts' => []];
+        }
+
+        if (!isset($result[$state]['districts'][$district])) {
+            $result[$state]['districts'][$district] = ['pincodes' => []];
+        }
+
+        $result[$state]['districts'][$district]['pincodes'][] = [
+            'code' => (string) $row->pincode,
+            'customers' => (int) $row->customers,
+            'label' => $row->city ?? 'Area',
+            'date' => $row->date // ✅ single date (latest)
+        ];
+    }
+
+    return response()->json($result);
+}
+
+    public function getOnboardingStats(Request $request)
+    {
+    
+        $query = Company::query();
+    
+        // Filters
+    
+        if ($request->filled('agent_id')) {
+    
+            $query->where('agent_id', $request->agent_id);
+    
+        }
+    
+        if ($request->filled('company_id')) {
+    
+            $query->where('id', $request->company_id);
+    
+        }
+    
+        if ($request->filled('created_by_id')) {
+    
+            $query->where('created_by_id', $request->created_by_id);
+    
+        }
+    
+        if ($request->filled('role')) {
+    
+            $query->where('role', $request->role);
+    
+        }
+    
+        // Optional date range filter
+    
+        if ($request->filled('start_date')) {
+    
+            $query->whereDate('created_at', '>=', $request->start_date);
+    
+        }
+    
+        if ($request->filled('end_date')) {
+    
+            $query->whereDate('created_at', '<=', $request->end_date);
+    
+        }
+    
+        // 📊 Group by date
+    
+        $data = $query->selectRaw('DATE(created_at) as date, COUNT(*) as count')
+    
+            ->groupBy('date')
+    
+            ->orderBy('date')
+    
+            ->get();
+    
+        //  Format like dummy JSON
+    
+        $result = $data->map(function ($item) {
+    
+            return [
+    
+                'date' => $item->date,
+    
+                'count' => (int) $item->count,
+    
+            ];
+    
+        });
+    
+        return response()->json($result);
+    
+    }
+
+    public function paymentWalletBalance(Request $request)
+    {
+        
+        $validator = Validator::make($request->all(), [
+    
+            'company_id'   => 'required|exists:companies,id',
+            'retailer_id'  => 'required|exists:companies,id',
+            'payment_id'   => 'required|string',
+            'payment_mode' => 'required|string',
+            'amount'       => 'required|numeric|min:1',
+            "url"          => 'nullable'
+    
+        ]);
+    
+        if ($validator->fails()) {
+    
+            return response()->json([
+    
+                'status'  => false,
+                'message' => 'Validation failed',
+                'errors'  => $validator->errors()
+    
+            ], 422);
+    
+        }
+    
+        $exists = \App\Models\AdvancePayment::where(
+            'payment_id',
+            $request->payment_id
+    
+        )->exists();
+    
+        if ($exists) {
+    
+            return response()->json([
+                'status'  => false,
+                'message' => 'Payment already processed'
+    
+            ], 409);
+        }
+    
+    
+        $payload = [
+    
+            'company_id'   => $request->company_id,
+            'retailer_id'  => $request->retailer_id,
+            'payment_id'   => $request->payment_id,
+            'payment_mode' => $request->payment_mode,
+            'amount'       => $request->amount
+    
+        ];
+    
+       
+        AdvancePaymentJob::dispatch($payload);
+      
+      
+       DB::table('payments_master')->insert([
+            'payment_id' => $request->payment_id,
+            'order_id' => "",
+            'project' => "warranty",
+            'service' => "advance_payment",
+            'amount' => $request->amount,
+            'currency' => "inr",
+            'status' => 'captured',
+            'paid_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+            'gateway' => $request->payment_mode,
+            'company_id' => $request->company_id,
+            'url'       => $request->url
+        ]);
+        
+        return response()->json([
+    
+            'status'  => true,
+            'message' => 'Advance payment job queued successfully',
+            'data' => [
+                'payment_id' => $request->payment_id,
+                'amount' => $request->amount
+            ]
+        ]);
+    
     }
 }

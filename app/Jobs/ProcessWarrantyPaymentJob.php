@@ -30,190 +30,736 @@ class ProcessWarrantyPaymentJob implements ShouldQueue
         $this->payload = $payload;
     }
 
-    public function handle()
-    {
-        DB::beginTransaction();
+  public function handle()
+  {
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATION
+    |--------------------------------------------------------------------------
+    */
 
-        try {
+    $required = [
+        'payment_id',
+        'imei',
+        'product_id',
+        'company_id',
+        'zoho_product_id',
+        'amount'
+    ];
 
-            /* =====================================================
-             | STEP 1: CREATE DEVICE
-             ===================================================== */
-            $device = WDevice::create([
-                'imei1'        => $this->payload['imei'],
-                'product_id'   => $this->payload['product_id'],
-                'company_id'   => $this->payload['company_id'],
-                'w_customer_id'=> $this->payload['customer_id'] ?? null,
-                'is_approved'  => 1,
-                'status'       => 1
-            ]);
+    foreach ($required as $field) {
 
-            WarrantyPaymentLog::create([
-                'payment_id' => $this->payload['payment_id'],
-                'device_id'  => $device->id,
-                'step'       => 'DEVICE_CREATED',
-                'status'     => 1
-            ]);
+        if (
+            !isset($this->payload[$field]) ||
+            $this->payload[$field] === ''
+        ) {
 
-            /* =====================================================
-             | STEP 2: CREATE ZOHO INVOICE
-             ===================================================== */
-            $customer = WCustomer::find($device->w_customer_id);
+            throw new \Exception(
+                $field . ' missing in payload'
+            );
+        }
+    }
 
-            $invoiceResult = app(\App\Services\ZohoInvoiceService::class)
-                ->createWarrantyInvoice(
-                    $device,
-                    $customer,
-                    $this->payload['company_id'],
-                    $this->payload['zoho_product_id'],
-                    $this->payload['payment_id']
-                );
+    $paymentId = $this->payload['payment_id'];
 
-            if (empty($invoiceResult['success'])) {
-                throw new \Exception($invoiceResult['message'] ?? 'Invoice creation failed');
-            }
+    try {
 
-            $invoice     = $invoiceResult['invoice'];
-            $invoiceId   = $invoice['invoice_id'];
+        /*
+        |--------------------------------------------------------------------------
+        | IDEMPOTENT CHECK
+        |--------------------------------------------------------------------------
+        */
 
-            $device->update([
-                'invoice_id'   => $invoiceId,
-                'invoice_json' => json_encode($invoice)
-            ]);
+        $alreadyCompleted = WarrantyPaymentLog::where(
+                'payment_id',
+                $paymentId
+            )
+            ->where(
+                'step',
+                'JOB_COMPLETED'
+            )
+            ->exists();
 
-            WarrantyPaymentLog::create([
-                'payment_id'       => $this->payload['payment_id'],
-                'device_id'        => $device->id,
-                'invoice_id'       => $invoiceId,
-                'step'             => 'INVOICE_CREATED',
-                'status'           => 1,
-                'response_payload' => json_encode($invoiceResult)
-            ]);
+        if ($alreadyCompleted) {
 
-            /* =====================================================
-             | STEP 3: CAPTURE RAZORPAY PAYMENT
-             ===================================================== */
-            $razor = new Client();
-
-            $capture = $razor->post(
-                "https://api.razorpay.com/v1/payments/{$this->payload['payment_id']}/capture",
+            Log::warning(
+                'PROCESS WARRANTY PAYMENT ALREADY COMPLETED',
                 [
-                    'auth' => [
-                        config('services.razorpay.razorpay_key'),
-                        config('services.razorpay.razorpay_secret'),
-                    ],
-                    'json' => [
-                        'amount'   => $this->payload['amount'] * 100,
-                        'currency' => 'INR'
-                    ]
+                    'payment_id' => $paymentId
                 ]
             );
 
-            $captureBody = json_decode($capture->getBody(), true);
+            return;
+        }
 
-            WarrantyPaymentLog::create([
-                'payment_id'       => $this->payload['payment_id'],
-                'step'             => 'RAZORPAY_CAPTURED',
-                'status'           => 1,
-                'response_payload' => json_encode($captureBody)
-            ]);
+        /*
+        |--------------------------------------------------------------------------
+        | JOB START LOG
+        |--------------------------------------------------------------------------
+        */
 
-            /* =====================================================
-             | STEP 4: CREATE ZOHO PAYMENT
-             ===================================================== */
-            $paymentResult = app(\App\Services\ZohoPaymentService::class)
-                ->createPayment(
+        WarrantyPaymentLog::firstOrCreate(
+
+            [
+                'payment_id' => $paymentId,
+                'step'       => 'JOB_STARTED'
+            ],
+
+            [
+                'status' => 1
+            ]
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | CREATE / LOAD DEVICE
+        |--------------------------------------------------------------------------
+        */
+
+        DB::transaction(function () use (
+            &$device,
+            $paymentId
+        ) {
+
+            $device = WDevice::where(
+                    'imei1',
+                    $this->payload['imei']
+                )
+                ->where(
+                    'product_id',
+                    $this->payload['product_id']
+                )
+                ->lockForUpdate()
+                ->first();
+
+            if (!$device) {
+
+                $device = WDevice::create([
+
+                    'imei1' =>
+                        $this->payload['imei'],
+
+                    'product_id' =>
+                        $this->payload['product_id'],
+
+                    'company_id' =>
+                        $this->payload['company_id'],
+
+                    'w_customer_id' =>
+                        $this->payload['customer_id']
+                        ?? null,
+
+                    'is_approved' => 1,
+
+                    'status' => 1
+                ]);
+
+                WarrantyPaymentLog::firstOrCreate(
+
+                    [
+                        'payment_id' => $paymentId,
+                        'step'       => 'DEVICE_CREATED'
+                    ],
+
+                    [
+                        'device_id' => $device->id,
+                        'status'    => 1
+                    ]
+                );
+            }
+
+        }, 3);
+
+        /*
+        |--------------------------------------------------------------------------
+        | LOAD CUSTOMER
+        |--------------------------------------------------------------------------
+        */
+
+        $customer = null;
+
+        if (!empty($device->w_customer_id)) {
+
+            $customer = WCustomer::find(
+                $device->w_customer_id
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | REFRESH DEVICE
+        |--------------------------------------------------------------------------
+        */
+
+        $device = WDevice::find($device->id);
+
+        /*
+        |--------------------------------------------------------------------------
+        | CREATE ZOHO INVOICE
+        |--------------------------------------------------------------------------
+        */
+
+        if (empty($device->invoice_id)) {
+
+            try {
+
+                $invoiceResult = app(
+                    \App\Services\ZohoInvoiceService::class
+                )->createWarrantyInvoice(
+
+                    $device,
+
+                    $customer,
+
+                    $this->payload['company_id'],
+
+                    $this->payload['zoho_product_id'],
+
+                    $paymentId
+                );
+
+                if (
+                    empty($invoiceResult['success'])
+                ) {
+
+                    throw new \Exception(
+                        $invoiceResult['message']
+                        ?? 'Invoice creation failed'
+                    );
+                }
+
+                $invoice =
+                    $invoiceResult['invoice'];
+
+                $invoiceId =
+                    $invoice['invoice_id'];
+
+                DB::transaction(function () use (
+                    $device,
+                    $invoice,
                     $invoiceId,
+                    $invoiceResult,
+                    $paymentId
+                ) {
+
+                    $device->update([
+
+                        'invoice_id' =>
+                            $invoiceId,
+
+                        'invoice_json' =>
+                            json_encode($invoice)
+                    ]);
+
+                    WarrantyPaymentLog::firstOrCreate(
+
+                        [
+                            'payment_id' => $paymentId,
+                            'step'       => 'INVOICE_CREATED'
+                        ],
+
+                        [
+                            'device_id' =>
+                                $device->id,
+
+                            'invoice_id' =>
+                                $invoiceId,
+
+                            'status' => 1,
+
+                            'response_payload' =>
+                                json_encode(
+                                    $invoiceResult
+                                )
+                        ]
+                    );
+
+                }, 3);
+
+            } catch (\Throwable $e) {
+
+                WarrantyPaymentLog::create([
+
+                    'payment_id' =>
+                        $paymentId,
+
+                    'device_id' =>
+                        $device->id ?? null,
+
+                    'step' =>
+                        'INVOICE_FAILED',
+
+                    'status' => 0,
+
+                    'error_message' =>
+                        $e->getMessage()
+                ]);
+
+                throw $e;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | REFRESH DEVICE
+        |--------------------------------------------------------------------------
+        */
+
+        $device = WDevice::find($device->id);
+
+        $invoice =
+            json_decode(
+                $device->invoice_json,
+                true
+            );
+
+        $invoiceId =
+            $device->invoice_id;
+
+        /*
+        |--------------------------------------------------------------------------
+        | CAPTURE RAZORPAY PAYMENT
+        |--------------------------------------------------------------------------
+        */
+
+        $captureDone = WarrantyPaymentLog::where(
+                'payment_id',
+                $paymentId
+            )
+            ->where(
+                'step',
+                'RAZORPAY_CAPTURED'
+            )
+            ->exists();
+
+        if (!$captureDone) {
+
+            try {
+
+                $razor = new Client();
+
+                $capture = $razor->post(
+
+                    "https://api.razorpay.com/v1/payments/{$paymentId}/capture",
+
+                    [
+
+                        'auth' => [
+
+                            config(
+                                'services.razorpay.razorpay_key'
+                            ),
+
+                            config(
+                                'services.razorpay.razorpay_secret'
+                            ),
+                        ],
+
+                        'json' => [
+
+                            'amount' =>
+                                $this->payload['amount'] * 100,
+
+                            'currency' => 'INR'
+                        ]
+                    ]
+                );
+
+                $captureBody = json_decode(
+                    $capture->getBody(),
+                    true
+                );
+
+                WarrantyPaymentLog::firstOrCreate(
+
+                    [
+                        'payment_id' => $paymentId,
+                        'step'       => 'RAZORPAY_CAPTURED'
+                    ],
+
+                    [
+                        'device_id' =>
+                            $device->id,
+
+                        'invoice_id' =>
+                            $invoiceId,
+
+                        'status' => 1,
+
+                        'response_payload' =>
+                            json_encode(
+                                $captureBody
+                            )
+                    ]
+                );
+
+            } catch (\Throwable $e) {
+
+                WarrantyPaymentLog::create([
+
+                    'payment_id' =>
+                        $paymentId,
+
+                    'device_id' =>
+                        $device->id,
+
+                    'step' =>
+                        'RAZORPAY_CAPTURE_FAILED',
+
+                    'status' => 0,
+
+                    'error_message' =>
+                        $e->getMessage()
+                ]);
+
+                throw $e;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | CREATE ZOHO PAYMENT
+        |--------------------------------------------------------------------------
+        */
+
+        if (empty($device->zoho_payment_id)) {
+
+            try {
+
+                $paymentResult = app(
+                    \App\Services\ZohoPaymentService::class
+                )->createPayment(
+
+                    $invoiceId,
+
                     $this->payload
                 );
 
-            WarrantyPaymentLog::create([
-                'payment_id'       => $this->payload['payment_id'],
-                'invoice_id'       => $invoiceId,
-                'zoho_payment_id'  => $paymentResult['payment_id'] ?? null,
-                'step'             => 'ZOHO_PAYMENT_CREATED',
-                'status'           => 1,
-                'response_payload' => json_encode($paymentResult)
-            ]);
+                DB::transaction(function () use (
+                    $device,
+                    $paymentResult,
+                    $paymentId,
+                    $invoiceId
+                ) {
 
-            /* =====================================================
-             | FINALIZE DEVICE
-             ===================================================== */
-            $device->update([
-                'payment_status'      => 1,
-                'razorpay_payment_id' => $this->payload['payment_id'],
-                'zoho_payment_id'     => $paymentResult['payment_id'] ?? null,
-                'paid_at'             => now()
-            ]);
+                    $device->update([
 
-            DB::commit();
+                        'payment_status' => 1,
 
-            Log::info('PROCESS WARRANTY PAYMENT COMMITTED', [
-                'device_id' => $device->id,
-                'invoice_id'=> $invoiceId
-            ]);
+                        'razorpay_payment_id' =>
+                            $paymentId,
 
-        } catch (\Exception $e) {
+                        'zoho_payment_id' =>
+                            $paymentResult['payment_id']
+                            ?? null,
 
-            DB::rollBack();
+                        'paid_at' => now()
+                    ]);
 
-            WarrantyPaymentLog::create([
-                'payment_id'    => $this->payload['payment_id'],
-                'step'          => 'FAILED',
-                'status'        => 0,
-                'error_message' => $e->getMessage()
-            ]);
+                    WarrantyPaymentLog::firstOrCreate(
 
-            Log::error('PROCESS WARRANTY PAYMENT FAILED', [
-                'error'   => $e->getMessage(),
-                'payload' => $this->payload
-            ]);
+                        [
+                            'payment_id' => $paymentId,
+                            'step'       => 'ZOHO_PAYMENT_CREATED'
+                        ],
 
-            throw $e;
+                        [
+                            'device_id' =>
+                                $device->id,
+
+                            'invoice_id' =>
+                                $invoiceId,
+
+                            'zoho_payment_id' =>
+                                $paymentResult['payment_id']
+                                ?? null,
+
+                            'status' => 1,
+
+                            'response_payload' =>
+                                json_encode(
+                                    $paymentResult
+                                )
+                        ]
+                    );
+
+                }, 3);
+
+            } catch (\Throwable $e) {
+
+                WarrantyPaymentLog::create([
+
+                    'payment_id' =>
+                        $paymentId,
+
+                    'device_id' =>
+                        $device->id,
+
+                    'step' =>
+                        'ZOHO_PAYMENT_FAILED',
+
+                    'status' => 0,
+
+                    'error_message' =>
+                        $e->getMessage()
+                ]);
+
+                throw $e;
+            }
         }
 
-        /* =====================================================
-         | SEND INVOICE EMAIL (ONCE)
-         ===================================================== */
-        if (
-            !WarrantyPaymentLog::where('payment_id', $this->payload['payment_id'])
-                ->where('step', 'INVOICE_MAIL_SENT')
-                ->exists()
-        ) {
-            Mail::to($customer->email)
-                ->queue(new InvoiceCreatedMail(
-                    $invoice,
-                    $invoice['invoice_url'] ?? '#'
-                ));
+        /*
+        |--------------------------------------------------------------------------
+        | INVOICE MAIL
+        |--------------------------------------------------------------------------
+        */
 
-            WarrantyPaymentLog::create([
-                'payment_id' => $this->payload['payment_id'],
-                'step'       => 'INVOICE_MAIL_SENT',
-                'status'     => 1
-            ]);
+        try {
+
+            if (
+                $customer &&
+                !empty($customer->email)
+            ) {
+
+                $mailLog =
+                    WarrantyPaymentLog::firstOrCreate(
+
+                        [
+                            'payment_id' => $paymentId,
+                            'step' =>
+                                'INVOICE_MAIL_SENT'
+                        ],
+
+                        [
+                            'device_id' =>
+                                $device->id,
+
+                            'status' => 1
+                        ]
+                    );
+
+                if (
+                    $mailLog->wasRecentlyCreated
+                ) {
+
+                    Mail::to(
+                        $customer->email
+                    )->queue(
+
+                        new InvoiceCreatedMail(
+
+                            $invoice,
+
+                            $invoice['invoice_url']
+                            ?? '#'
+                        )
+                    );
+                }
+            }
+
+        } catch (\Throwable $e) {
+
+            Log::error(
+                'INVOICE MAIL FAILED',
+                [
+                    'payment_id' =>
+                        $paymentId,
+
+                    'error' =>
+                        $e->getMessage()
+                ]
+            );
         }
 
-        /* =====================================================
-         | SEND PAYMENT COMPLETED EMAIL
-         ===================================================== */
-        if ($customer && !empty($customer->email)) {
+        /*
+        |--------------------------------------------------------------------------
+        | PAYMENT SUCCESS MAIL
+        |--------------------------------------------------------------------------
+        */
 
-            Mail::to($customer->email)
-                ->queue(new PaymentCompletedMail(
-                    $device->fresh(['customer'])
-                ));
+        try {
 
-            WarrantyPaymentLog::create([
-                'payment_id' => $this->payload['payment_id'],
-                'device_id'  => $device->id,
-                'step'       => 'PAYMENT_MAIL_SENT',
-                'status'     => 1
-            ]);
+            if (
+                $customer &&
+                !empty($customer->email)
+            ) {
+
+                $paymentMailLog =
+                    WarrantyPaymentLog::firstOrCreate(
+
+                        [
+                            'payment_id' => $paymentId,
+                            'step' =>
+                                'PAYMENT_MAIL_SENT'
+                        ],
+
+                        [
+                            'device_id' =>
+                                $device->id,
+
+                            'status' => 1
+                        ]
+                    );
+
+                if (
+                    $paymentMailLog->wasRecentlyCreated
+                ) {
+
+                    Mail::to(
+                        $customer->email
+                    )->queue(
+
+                        new PaymentCompletedMail(
+
+                            $device->fresh(
+                                ['customer']
+                            )
+                        )
+                    );
+                }
+            }
+
+        } catch (\Throwable $e) {
+
+            Log::error(
+                'PAYMENT MAIL FAILED',
+                [
+                    'payment_id' =>
+                        $paymentId,
+
+                    'error' =>
+                        $e->getMessage()
+                ]
+            );
         }
 
-        /* =====================================================
-         | EVENT (OPTIONAL)
-         ===================================================== */
-        event(new WarrantyPaymentCompleted($device));
+        /*
+        |--------------------------------------------------------------------------
+        | EVENT
+        |--------------------------------------------------------------------------
+        */
+
+        try {
+
+            $eventLog =
+                WarrantyPaymentLog::firstOrCreate(
+
+                    [
+                        'payment_id' => $paymentId,
+                        'step' =>
+                            'PAYMENT_EVENT_SENT'
+                    ],
+
+                    [
+                        'device_id' =>
+                            $device->id,
+
+                        'status' => 1
+                    ]
+                );
+
+            if (
+                $eventLog->wasRecentlyCreated
+            ) {
+
+                event(
+                    new WarrantyPaymentCompleted(
+                        $device
+                    )
+                );
+            }
+
+        } catch (\Throwable $e) {
+
+            Log::error(
+                'PAYMENT EVENT FAILED',
+                [
+                    'payment_id' =>
+                        $paymentId,
+
+                    'error' =>
+                        $e->getMessage()
+                ]
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | JOB COMPLETED
+        |--------------------------------------------------------------------------
+        */
+
+        WarrantyPaymentLog::firstOrCreate(
+
+            [
+                'payment_id' => $paymentId,
+                'step'       => 'JOB_COMPLETED'
+            ],
+
+            [
+                'device_id' =>
+                    $device->id,
+
+                'status' => 1
+            ]
+        );
+
+        Log::info(
+            'PROCESS WARRANTY PAYMENT SUCCESS',
+            [
+                'payment_id' =>
+                    $paymentId,
+
+                'device_id' =>
+                    $device->id,
+
+                'invoice_id' =>
+                    $invoiceId
+            ]
+        );
+
+    } catch (\Throwable $e) {
+
+        Log::error(
+            'PROCESS WARRANTY PAYMENT FAILED',
+            [
+
+                'payment_id' =>
+                    $paymentId,
+
+                'message' =>
+                    $e->getMessage(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'trace' =>
+                    substr(
+                        $e->getTraceAsString(),
+                        0,
+                        3000
+                    )
+            ]
+        );
+
+        WarrantyPaymentLog::create([
+
+            'payment_id' =>
+                $paymentId,
+
+            'step' =>
+                'FINAL_FAILED',
+
+            'status' => 0,
+
+            'error_message' =>
+                $e->getMessage()
+        ]);
+
+        throw $e;
     }
+}
 }

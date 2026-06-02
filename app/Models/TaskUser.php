@@ -28,7 +28,8 @@ class TaskUser extends Model
         'otp_expires_at',
         'company_id',
         'status',
-        'picture'
+        'picture',
+        'last_seen_at'
     ];
 
     // Reporting Manager

@@ -44,12 +44,26 @@ class EarningController extends Controller
             $payoutColumn = 'other_payout';
             $context      = 'agent';
 
-        } elseif ($request->company_id) {
+
+        }
+        
+        elseif ($request->promoter_id) {
+
+            $filterColumn = 'promoter_id';
+            $filterValue  = $request->promoter_id;
+            $payoutColumn = 'employee_payout';
+            $context      = 'employee';
+
+        
+        
+        } 
+        elseif ($request->company_id) {
 
             $filterColumn = 'company_id';
             $filterValue  = $request->company_id;
             $payoutColumn = 'company_payout';
             $context      = 'company';
+
 
         } else {
             return response()->json([

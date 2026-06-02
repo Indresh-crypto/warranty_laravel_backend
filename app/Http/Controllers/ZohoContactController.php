@@ -125,54 +125,54 @@ public function syncZohoContactsByEmail(Request $request)
         $client = new Client();
 
         // Step 2: Get all org users without contact_id
-        $users = ZohoUser::where('company_id', $request->company_id)
-            ->whereNull('zoho_contact_id')
-            ->whereNotNull('email')
-            ->get();
-
-        $updated = [];
-        $skipped = [];
-
-        foreach ($users as $user) {
-          
-          $url = "https://www.zohoapis.in/books/v3/contacts";
-        $response = $client->get($url, [
-            'headers' => [
-                'Authorization' => 'Zoho-oauthtoken ' . $zohoUser->zoho_access_token,
-                'Content-Type'  => 'application/json',
-            ],
-            'query' => [
-                'organization_id' => $zohoUser->zoho_org_id,
-                'email'           => strtolower(trim($user->email)), // normalize
-            ],
-        ]);
-
-    $body = json_decode((string) $response->getBody(), true);
+            $users = ZohoUser::where('company_id', $request->company_id)
+                ->whereNull('zoho_contact_id')
+                ->whereNotNull('email')
+                ->get();
     
-    // if empty contacts, try full list search
-    if (empty($body['contacts'])) {
-        $listResponse = $client->get($url, [
-            'headers' => [
-                'Authorization' => 'Zoho-oauthtoken ' . $zohoUser->zoho_access_token,
-                'Content-Type'  => 'application/json',
-            ],
-            'query' => [
-                'organization_id' => $zohoUser->zoho_org_id,
-                'per_page'        => 200, // adjust if needed
-            ],
-        ]);
+            $updated = [];
+            $skipped = [];
 
-    $listBody = json_decode((string) $listResponse->getBody(), true);
+                foreach ($users as $user) {
+                  
+                  $url = "https://www.zohoapis.in/books/v3/contacts";
+                $response = $client->get($url, [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $zohoUser->zoho_access_token,
+                        'Content-Type'  => 'application/json',
+                    ],
+                    'query' => [
+                        'organization_id' => $zohoUser->zoho_org_id,
+                        'email'           => strtolower(trim($user->email)), // normalize
+                    ],
+                ]);
 
-            foreach ($listBody['contacts'] ?? [] as $contact) {
-                foreach ($contact['contact_persons'] ?? [] as $person) {
-                    if (strtolower($person['email'] ?? '') === strtolower(trim($user->email))) {
-                        $user->update(['contact_id' => $contact['contact_id']]);
-                        break 2; // stop both loops
+            $body = json_decode((string) $response->getBody(), true);
+            
+            // if empty contacts, try full list search
+            if (empty($body['contacts'])) {
+                $listResponse = $client->get($url, [
+                    'headers' => [
+                        'Authorization' => 'Zoho-oauthtoken ' . $zohoUser->zoho_access_token,
+                        'Content-Type'  => 'application/json',
+                    ],
+                    'query' => [
+                        'organization_id' => $zohoUser->zoho_org_id,
+                        'per_page'        => 200, // adjust if needed
+                    ],
+                ]);
+
+                $listBody = json_decode((string) $listResponse->getBody(), true);
+            
+                        foreach ($listBody['contacts'] ?? [] as $contact) {
+                            foreach ($contact['contact_persons'] ?? [] as $person) {
+                                if (strtolower($person['email'] ?? '') === strtolower(trim($user->email))) {
+                                    $user->update(['contact_id' => $contact['contact_id']]);
+                                    break 2; // stop both loops
+                                }
+                            }
+                        }
                     }
-                }
-            }
-        }
                     if (isset($body['code']) && $body['code'] == 0 && !empty($body['contacts'])) {
                         $contact = $body['contacts'][0]; // take first match
                         $contactId = $contact['contact_id'];

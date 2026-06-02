@@ -23,8 +23,8 @@ class LeadCreateSystemMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Warranty Lead Received - GoElectronix')
-            ->view('emails.lead_new')   // 🔥 Use view instead of markdown since HTML
+        return $this->subject('Lead Received - GoElectronix')
+            ->view('emails.lead_new')   // Use view instead of markdown since HTML
             ->with([
                 'lead'    => $this->lead,
                 'company' => $this->company

@@ -6,7 +6,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
-
+use Illuminate\Support\Facades\Log;
 class InvoiceCreatedMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
@@ -16,8 +16,13 @@ class InvoiceCreatedMail extends Mailable implements ShouldQueue
         public string $invoiceUrl
     ) {}
 
-    public function build()
+       public function build()
     {
+        Log::info('MAIL BUILD TRIGGERED', [
+            'invoice' => $this->invoice,
+            'invoiceUrl' => $this->invoiceUrl
+        ]);
+    
         return $this->subject('🧾 Invoice Generated – Action Required')
             ->markdown('emails.invoice_created', [
                 'invoice' => $this->invoice,

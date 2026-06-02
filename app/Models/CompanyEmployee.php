@@ -2,10 +2,17 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Foundation\Auth\User as Authenticatable;
 
-class CompanyEmployee extends Model
+use Laravel\Sanctum\HasApiTokens;
+
+class CompanyEmployee extends Authenticatable
 {
+
+    use HasApiTokens;
+
+    protected $guarded = [];
+
     protected $table = 'company_employee';
 
     protected $fillable = [
@@ -36,13 +43,20 @@ class CompanyEmployee extends Model
         'password_changed_at',
         'logo',
         'domain',
-        'title'
+        'title',
+        'otp',
+        'otp_expires_at',
+        'is_email_verified',
+        'products',
+        'personal_access_tokens'
     ];
-
+    
     protected $casts = [
         'categories' => 'array',
         'handle'     => 'array',
-        'pincodes'   => 'array'
+        'pincodes'   => 'array',
+        'products'   => 'array', 
+        'otp_expires_at' => 'datetime'
     ];
     
      public function company()

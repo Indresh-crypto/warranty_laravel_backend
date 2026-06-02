@@ -71,8 +71,12 @@ class WarrantyDeviceModelController extends Controller
     ]);
 }
 
+  
     public function searchDeviceModels(Request $request)
     {
+        // Dynamic per_page (default 20, max 100)
+        $perPage = min($request->get('per_page', 20), 100);
+    
         $query = DeviceModel::with(['brand', 'category'])
             ->where('status', 1);
     
@@ -97,7 +101,7 @@ class WarrantyDeviceModelController extends Controller
         }
     
         return response()->json([
-            'data' => $query->orderBy('name')->paginate(20)
+            'data' => $query->orderBy('name')->paginate($perPage)
         ]);
     }
     

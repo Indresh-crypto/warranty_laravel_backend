@@ -22,11 +22,11 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Foundation\Bus\Dispatchable;
-
+use Illuminate\Support\Facades\Mail;
 use App\Mail\InvoiceCreatedMail;
 use App\Mail\PaymentCompletedMail;
 use App\Models\Company;
-use Illuminate\Support\Facades\Mail;
+
 
 class WarrantyPaymentFlowJob implements ShouldQueue
 {
@@ -46,9 +46,13 @@ class WarrantyPaymentFlowJob implements ShouldQueue
     {
         $this->payload = $payload;
     }
+    
+    
 
     public function handle()
     {
+
+
 
         /*
         |--------------------------------------------------------------------------
@@ -79,6 +83,23 @@ class WarrantyPaymentFlowJob implements ShouldQueue
 
             $paymentId = $this->payload['payment_id'];
 
+
+             $lock = WarrantyFlowLog::where('payment_id', $paymentId)
+                    ->where('step', 'JOB_LOCK')
+                    ->lockForUpdate()
+                    ->first();
+            
+                if ($lock) {
+                    DB::rollBack();
+                    return;
+                }
+            
+                WarrantyFlowLog::create([
+                    'payment_id' => $paymentId,
+                    'step' => 'JOB_LOCK',
+                    'status' => 1
+                ]);
+                
             /*
             |--------------------------------------------------------------------------
             | JOB START LOG
@@ -113,6 +134,15 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             | STEP 1 : DEVICE CREATE / LOAD (IDEMPOTENT)
             |--------------------------------------------------------------------------
             */
+
+            $createdBy  = $this->payload['created_by'] ?? null;
+            $retailerId = $this->payload['retailer_id'];
+            
+            $promoterId = null;
+            
+            if (!empty($createdBy) && $createdBy != $retailerId) {
+                $promoterId = $createdBy;
+            }
 
             $device = WDevice::where('imei1', $this->payload['imei1'])
                 ->where('product_id', $this->payload['product_id'])
@@ -160,7 +190,8 @@ class WarrantyPaymentFlowJob implements ShouldQueue
 
                     // Meta
                     'company_id' => $this->payload['company_id'],
-                    'created_by' => $this->payload['created_by'] ?? null,
+                    'created_by' => $createdBy,
+                    'promoter_id' => $promoterId,
 
                     'is_approved' => 1
                 ]);
@@ -198,7 +229,7 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             $warrCustomer = WCustomer::find($this->payload['w_customer_id']);
             
             
-            $company = \App\Models\Company::latest()->first();
+            $company = \App\Models\Company::find($this->payload['retailer_id']);
 
               \Log::critical('EMAIL SECTION ENTERED', [
                             'company' => $company
@@ -284,21 +315,25 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             |--------------------------------------------------------------------------
             | STEP 3 : CREATE ZOHO INVOICE
             |--------------------------------------------------------------------------
-            */
+            
 
             if (!WarrantyFlowLog::where('payment_id', $paymentId)
                 ->where('step', 'INVOICE_CREATED')
-                ->exists()) {
+                ->exists())
+            {
 
-                $invoiceResult = app(WarrantyPaymentFlowController::class)
-                    ->createWarrantyInvoice(
-                        $device,
-                        $this->payload['company_id'],
-                        $this->payload['retailer_id'],
-                        $this->payload['product_id'],
-                        $paymentId,
-                        $this->payload['amount']
-                    );
+               
+               $controller = app(WarrantyPaymentFlowController::class);
+
+                $invoiceResult = $controller->createWarrantyInvoice(
+                    $device,
+                    $this->payload['company_id'],
+                    $this->payload['retailer_id'],
+                    $this->payload['product_id'],
+                    $paymentId,
+                    $this->payload['amount']
+                );
+                
 
                 if (empty($invoiceResult['success'])) {
                     throw new \Exception($invoiceResult['message'] ?? 'Invoice creation failed');
@@ -332,6 +367,81 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     'response_data' => json_encode($invoiceResult)
                 ]);
             }
+                */
+                
+                /*
+            |--------------------------------------------------------------------------
+            | STEP : CREATE ZOHO INVOICE (SAFE)
+            |--------------------------------------------------------------------------
+            */
+            
+            if (empty($device->invoice_id)) {
+
+                    $controller = app(WarrantyPaymentFlowController::class);
+                
+                    $invoiceResult = $controller->createWarrantyInvoice(
+                        $device,
+                        $this->payload['company_id'],
+                        $this->payload['retailer_id'],
+                        $this->payload['product_id'],
+                        $paymentId,
+                        $this->payload['amount']
+                    );
+
+                if (empty($invoiceResult['success'])) {
+                    throw new \Exception($invoiceResult['message'] ?? 'Invoice creation failed');
+                }
+            
+                $zohoInvoice = $invoiceResult['invoice'];
+            
+                $device->update([
+                    'invoice_id' => $zohoInvoice['invoice_id'],
+                    'invoice_created_date' => $zohoInvoice['date'] ?? now()->toDateString(),
+                    'invoice_status' => $zohoInvoice['status'] ?? 'created',
+                    'invoice_json' => json_encode($zohoInvoice)
+                ]);
+
+
+               $company = \App\Models\Company::find(
+                        $this->payload['retailer_id']
+                    );
+                    
+                    $invoiceNumber =
+                        $zohoInvoice['invoice_number'] ?? '-';
+                    
+                    $invoiceDate =
+                        $zohoInvoice['date'] ?? now()->toDateString();
+                    
+                    $invoiceAmount =
+                        $zohoInvoice['total'] ??
+                        $this->payload['amount'];
+                    
+                    $invoiceUrl =
+                        $zohoInvoice['invoice_url'] ??
+                        ($zohoInvoice['customer_view_url'] ?? '');
+                    
+                    app(\App\Services\WhatsappService::class)
+                        ->invoiceWhatsapp(
+                            $company,
+                            $invoiceNumber,
+                            $invoiceDate,
+                            $invoiceAmount,
+                            $invoiceUrl
+                        );
+                                            
+                        
+                    WarrantyFlowLog::create([
+                        'payment_id' => $paymentId,
+                        'device_id'  => $device->id,
+                        'invoice_id' => $zohoInvoice['invoice_id'],
+                        'step'       => 'INVOICE_CREATED',
+                        'status'     => 1
+                    ]);
+                
+                    // IMPORTANT
+                    DB::commit();
+                    DB::beginTransaction();
+                }
 
 
                 /*
@@ -341,7 +451,7 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                 */
                 
                 if (!WarrantyFlowLog::where('payment_id', $paymentId)
-                    ->where('step', 'INVOICE_PAID')
+                    ->where('step', 'INVOICE_SENT')
                     ->exists()) {
                 
                     $sendResponse = app(WarrantyPaymentFlowController::class)
@@ -356,15 +466,17 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                 
                    $device->update([
                      //   'invoice_status' => $sendResponse['invoice']['status'] ?? 'unknown',
-                        'invoice_status' => 'paid',
+                       'invoice_status' => 'sent',
                         'status' =>1
                     ]);
+                    
+                
                 
                     WarrantyFlowLog::create([
                         'payment_id' => $paymentId,
                         'device_id' => $device->id,
                         'invoice_id' => $device->invoice_id,
-                        'step' => 'INVOICE_PAID',
+                        'step' => 'INVOICE_SENT',
                         'status' => 1,
                         'response_data' => json_encode($sendResponse)
                     ]);
@@ -379,13 +491,11 @@ class WarrantyPaymentFlowJob implements ShouldQueue
            
 
 
-            if (!WarrantyFlowLog::where('payment_id', $paymentId)
-                ->where('step', 'ZOHO_PAYMENT_CREATED')
-                ->exists()) {
+            if (empty($device->zoho_payment_id)) {
             
-                $invoiceId = WarrantyFlowLog::where('payment_id', $paymentId)
-                    ->where('step', 'INVOICE_CREATED')
-                    ->value('invoice_id');
+                
+                    
+                $invoiceId = $device->invoice_id;
             
                 $zohoResponse = app(WarrantyPaymentFlowController::class)
                     ->createZohoPayment(
@@ -426,6 +536,29 @@ class WarrantyPaymentFlowJob implements ShouldQueue
                     'paid_at'              => now(),
                     'status'               => 1
                 ]);
+
+
+                try {
+                
+                    $company = \App\Models\Company::find($this->payload['retailer_id']);
+                    app(\App\Services\WhatsappService::class)
+                        ->paymentSuccessWhatsapp(
+                            $company,
+                            $zohoPayment,
+                            $this->payload['amount'],
+                            $paymentId,
+                            "Payment Received."
+                        );
+                        
+                     
+                
+                } catch (\Exception $e) {
+                
+                    \Log::error('Retailer Payment WhatsApp Failed', [
+                        'device_id' => $device->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
 
                 /*
                 WarrantyFlowLog::create([
@@ -476,6 +609,7 @@ class WarrantyPaymentFlowJob implements ShouldQueue
 
           
 
+           $company = Company::find($this->payload['retailer_id']);
 
             Mail::to($company->contact_email)
                 ->queue(new InvoiceCreatedMail(
@@ -490,26 +624,10 @@ class WarrantyPaymentFlowJob implements ShouldQueue
             ]);
         }
 
-        /*
-        if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','PAYMENT_MAIL_SENT')->exists()) {
-
-            Mail::to($company->contact_email)
-                ->queue(new PaymentCompletedMail(
-                    $device->fresh(['customer'])
-                ));
-
-            WarrantyFlowLog::create([
-                'payment_id' => $paymentId,
-                'device_id'  => $device->id,
-                'step' => 'PAYMENT_MAIL_SENT',
-                'status' => 1
-            ]);
-        }
-
-*/
+    
 
 
-        // 3️⃣ Existing notifications
+        // Existing notifications
         if (!WarrantyFlowLog::where('payment_id',$paymentId)->where('step','EMAIL_SENT')->exists()) {
             event(new WarrantyRegistered($device));
             WarrantyFlowLog::create([

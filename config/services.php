@@ -28,6 +28,12 @@ return [
     ],
     
     
+    'cashfree' => [
+        'client_id' => env('CASHFREE_CLIENT_ID'),
+        'client_secret' => env('CASHFREE_CLIENT_SECRET'),
+        'base_url' => env('CASHFREE_BASE_URL', 'https://sandbox.cashfree.com'),
+    ],
+
     
     'gupshup' => [
         'key' => env('GUPSHUP_API_KEY'),

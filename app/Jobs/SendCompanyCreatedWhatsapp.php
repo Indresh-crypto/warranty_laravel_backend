@@ -10,6 +10,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class SendCompanyCreatedWhatsapp implements ShouldQueue
 {
@@ -32,26 +33,38 @@ class SendCompanyCreatedWhatsapp implements ShouldQueue
 
         $destination = '91' . ltrim($company->contact_phone, '0');
 
-        $response = Http::asForm()->withHeaders([
-            'apikey'        => config('services.gupshup.key'),
-            'Cache-Control' => 'no-cache',
-        ])->post('https://api.gupshup.io/wa/api/v1/template/msg', [
-            'channel'     => 'whatsapp',
-            'source'      => config('services.gupshup.source'),
-            'destination' => $destination,
-            'src.name'    => 'GoelectronixWarranty',
-            'template'    => json_encode([
-               // 'id' => 'c7683016-ffb6-4ccf-9aee-0c729afd1348',
-                'id' => 'c94ca922-937d-4a7d-badc-ac967cf70f46',
-                'params' => [
-                    $company->business_name ?? 'Retailer',
-                    'Pending verification',
-                    'Support Team',
-                    '90-000-000',
-                    'https://warrantynew.goelectronix.co.in' //login here
-                ]
-            ])
-        ]);
+      $params = [
+            trim($company->business_name ?? 'Retailer'),
+            $company->org_code,
+            $company->contact_phone,
+            optional($company->created_at)->format('d-m-Y'),
+            'https://warrantynew.goelectronix.co.in'
+        ];
+        
+       $response = Http::withHeaders([
+                'Cache-Control' => 'no-cache',
+                'Content-Type' => 'application/x-www-form-urlencoded',
+                'apikey' => 'xmzzeoeowfppicbquvp3zupvntzeqh2j',
+            ])->asForm()->post('https://api.gupshup.io/wa/api/v1/template/msg', [
+            
+                'channel' => 'whatsapp',
+                'source' => '918828272570',
+                'destination' => $destination,
+                'src.name' => 'WarrantyMitra',
+            
+                'template' => json_encode([
+                    "id" => "8c63e4e7-cb0a-4105-9c57-b7ead5d04e73",
+                    "params" => $params
+                ], JSON_UNESCAPED_SLASHES),
+            
+                'message' => json_encode([
+                    "image" => [
+                        "link" => "https://media.licdn.com/dms/image/v2/D4D0BAQExgePoZh64lg/company-logo_200_200/company-logo_200_200/0/1706707195923/goelectronix_technologies_private_limited_logo?e=2147483647&v=beta&t=x5psH1cSOKyZVaPyjtvnNu6MHvQmPQWowNF2PVBUUps"
+                    ],
+                    "type" => "image"
+                ], JSON_UNESCAPED_SLASHES)
+            
+            ]);
 
         if ($response->failed()) {
             Log::error('Gupshup WhatsApp failed', [

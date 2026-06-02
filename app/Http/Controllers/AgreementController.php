@@ -26,18 +26,32 @@ class AgreementController extends Controller
         return response()->json(['ok'=>true]);
     }
     
-    public function generateAgreement($type, $companyId)
-    {
-        /* ================= FETCH COMPANY ================= */
+   public function generateAgreement($type, $companyId)
+{
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | FETCH COMPANY
+        |--------------------------------------------------------------------------
+        */
         $company = Company::findOrFail($companyId);
 
-        /* ================= FETCH SERVICE PROVIDER (PARENT) ================= */
-       $serviceProvider = Company::where('id', $company->company_id)
-        ->where('role', 2)
-        ->first()
-            ?? Company::where('id', 1)->first();
+        /*
+        |--------------------------------------------------------------------------
+        | FETCH SERVICE PROVIDER
+        |--------------------------------------------------------------------------
+        */
+        $serviceProvider = Company::where('id', $company->company_id)
+            ->where('role', 2)
+            ->first()
+            ?? Company::find(1);
 
-        /* ================= SELECT TEMPLATE ================= */
+        /*
+        |--------------------------------------------------------------------------
+        | SELECT TEMPLATE
+        |--------------------------------------------------------------------------
+        */
         $templateFile = match ((string) $type) {
             '5' => 'RetailerAgreement.docx',
             '4' => 'AgentAgreement.docx',
@@ -46,119 +60,305 @@ class AgreementController extends Controller
         };
 
         if (!$templateFile) {
-            return response()->json(['error' => 'Invalid agreement type'], 400);
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid agreement type'
+            ], 400);
         }
 
         $templatePath = storage_path("app/template/{$templateFile}");
 
         if (!file_exists($templatePath)) {
-            return response()->json(['error' => 'Template not found'], 404);
+
+            \Log::error('Agreement template missing', [
+                'path' => $templatePath
+            ]);
+
+            return response()->json([
+                'status' => false,
+                'message' => 'Agreement template not found'
+            ], 404);
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | LOAD TEMPLATE
+        |--------------------------------------------------------------------------
+        */
         $template = new TemplateProcessor($templatePath);
 
-        /* ================= EFFECTIVE DATE ================= */
+        /*
+        |--------------------------------------------------------------------------
+        | DATE VARIABLES
+        |--------------------------------------------------------------------------
+        */
         $effectiveDate = $company->created_at ?? now();
 
-        $template->setValue('effective_day', $effectiveDate->format('d'));
-        $template->setValue('effective_month', $effectiveDate->format('F'));
-        $template->setValue('effective_year', $effectiveDate->format('Y'));
+        $template->setValue(
+            'effective_day',
+            $this->safeDocxValue($effectiveDate->format('d'))
+        );
 
-        /* ================= PARTNER (CHILD COMPANY) ================= */
-        $partnerFullAddress =
-            ($company->address_line1 ?? '') . "\n" .
-            ($company->address_line2 ?? '') . "\n" .
-            ($company->district ?? '') . ' ' . ($company->city ?? '') . "\n" .
-            ($company->state ?? '') . ' – ' . ($company->pincode ?? '');
+        $template->setValue(
+            'effective_month',
+            $this->safeDocxValue($effectiveDate->format('F'))
+        );
 
+        $template->setValue(
+            'effective_year',
+            $this->safeDocxValue($effectiveDate->format('Y'))
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | OWNER NAME
+        |--------------------------------------------------------------------------
+        */
         $ownerFullName = trim(
             ($company->owner_first_name ?? '') . ' ' .
             ($company->owner_middle_name ?? '') . ' ' .
             ($company->owner_last_name ?? '')
         );
-        
-        $now = Carbon::now()->format('d F Y');
 
-        $template->setValue('partner_business_name', $company->business_name ?? '');
-        $template->setValue('partner_trade_name', $company->trade_name ?? '');
-        $template->setValue('partner_contact_person', $company->contact_person ?? '');
-        $template->setValue('partner_contact_phone', $company->contact_phone ?? '');
-        $template->setValue('partner_contact_email', $company->contact_email ?? '');
+        /*
+        |--------------------------------------------------------------------------
+        | ADDRESSES
+        |--------------------------------------------------------------------------
+        */
+        $partnerFullAddress =
+            ($company->address_line1 ?? '') . "\n" .
+            ($company->address_line2 ?? '') . "\n" .
+            ($company->district ?? '') . ' ' .
+            ($company->city ?? '') . "\n" .
+            ($company->state ?? '') . ' - ' .
+            ($company->pincode ?? '');
 
-        $template->setValue('partner_signatory_name', $ownerFullName ?? '');
-  
-        $template->setValue('partner_owner_full_name', $ownerFullName);
-        $template->setValue('partner_owner_email', $company->owner_email ?? '');
-        $template->setValue('partner_owner_contact', $company->owner_contact ?? '');
+        /*
+        |--------------------------------------------------------------------------
+        | PARTNER VALUES
+        |--------------------------------------------------------------------------
+        */
+        $partnerFields = [
 
-        $template->setValue('partner_address_line1', $company->address_line1 ?? '');
-        $template->setValue('partner_address_line2', $company->address_line2 ?? '');
-        $template->setValue('partner_city', $company->city ?? '');
-        $template->setValue('partner_district', $company->district ?? '');
-        $template->setValue('partner_state', $company->state ?? '');
-        $template->setValue('partner_pincode', $company->pincode ?? '');
+            'partner_business_name' => $company->business_name,
+            'partner_trade_name' => $company->trade_name,
+            'partner_contact_person' => $company->contact_person,
+            'partner_contact_phone' => $company->contact_phone,
+            'partner_contact_email' => $company->contact_email,
 
-        $template->setValue('partner_pan', $company->pan ?? '');
-        $template->setValue('partner_gst', $company->gst ?? '');
-        $template->setValue('partner_business_type', $company->business_type ?? '');
+            'partner_signatory_name' => $ownerFullName,
 
-        $template->setValue('partner_account_no', $company->account_no ?? '');
-        $template->setValue('partner_ifsc', $company->ifsc_code ?? '');
-        $template->setValue('partner_bank_name', $company->bank_name ?? '');
-        $template->setValue('partner_branch_name', $company->branch_name ?? '');
+            'partner_owner_full_name' => $ownerFullName,
+            'partner_owner_email' => $company->owner_email,
+            'partner_owner_contact' => $company->owner_contact,
 
-        $template->setValue('partner_company_code', $company->company_code ?? '');
-        $template->setValue('partner_role', $company->role ?? '');
-        $template->setValue('partner_status', $company->status ?? '');
-        $template->setValue('partner_created_at', optional($company->created_at)->format('d-m-Y'));
+            'partner_address_line1' => $company->address_line1,
+            'partner_address_line2' => $company->address_line2,
+            'partner_city' => $company->city,
+            'partner_district' => $company->district,
+            'partner_state' => $company->state,
+            'partner_pincode' => $company->pincode,
 
-    
-        /* ================= SERVICE PROVIDER ================= */
+            'partner_full_address' => $partnerFullAddress,
+
+            'partner_pan' => $company->pan,
+            'partner_gst' => $company->gst,
+            'partner_business_type' => $company->business_type,
+
+            'partner_account_no' => $company->account_no,
+            'partner_ifsc' => $company->ifsc_code,
+            'partner_bank_name' => $company->bank_name,
+            'partner_branch_name' => $company->branch_name,
+
+            'partner_company_code' => $company->company_code,
+            'partner_role' => $company->role,
+            'partner_status' => $company->status,
+
+            'partner_created_at' =>
+                optional($company->created_at)->format('d-m-Y'),
+        ];
+
+        foreach ($partnerFields as $key => $value) {
+
+            $template->setValue(
+                $key,
+                $this->safeDocxValue($value)
+            );
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | SERVICE PROVIDER VALUES
+        |--------------------------------------------------------------------------
+        */
         if ($serviceProvider) {
-            
-        
+
             $serviceProviderAddress =
                 ($serviceProvider->address_line1 ?? '') . "\n" .
                 ($serviceProvider->address_line2 ?? '') . "\n" .
-                ($serviceProvider->district ?? '') . ' ' . ($serviceProvider->city ?? '') . "\n" .
-                ($serviceProvider->state ?? '') . ' – ' . ($serviceProvider->pincode ?? '') . ' India';
+                ($serviceProvider->district ?? '') . ' ' .
+                ($serviceProvider->city ?? '') . "\n" .
+                ($serviceProvider->state ?? '') . ' - ' .
+                ($serviceProvider->pincode ?? '') . ' India';
 
-            $template->setValue('service_provider_business_name', $serviceProvider->business_name ?? '');
-            $template->setValue('service_provider_full_address', $serviceProviderAddress);
-            $template->setValue('service_provider_signatory_name', $serviceProvider->contact_person ?? '');
-            $template->setValue('service_provider_contact_email', $serviceProvider->contact_email ?? '');
-            $template->setValue('service_provider_contact_phone', $serviceProvider->contact_phone ?? '');
-            $template->setValue('agreement_date', $now ?? '');
-            
-            $template->setValue('service_provider_gst', $serviceProvider->gst ?? '');
-            $template->setValue('service_provider_pan', $serviceProvider->pan ?? '');
+            $serviceProviderFields = [
+
+                'service_provider_business_name' =>
+                    $serviceProvider->business_name,
+
+                'service_provider_full_address' =>
+                    $serviceProviderAddress,
+
+                'service_provider_signatory_name' =>
+                    $serviceProvider->contact_person,
+
+                'service_provider_contact_email' =>
+                    $serviceProvider->contact_email,
+
+                'service_provider_contact_phone' =>
+                    $serviceProvider->contact_phone,
+
+                'service_provider_gst' =>
+                    $serviceProvider->gst,
+
+                'service_provider_pan' =>
+                    $serviceProvider->pan,
+
+                'mcp_business_name' =>
+                    $serviceProvider->business_name,
+
+                'agreement_date' =>
+                    Carbon::now()->format('d F Y'),
+            ];
+
+            foreach ($serviceProviderFields as $key => $value) {
+
+                $template->setValue(
+                    $key,
+                    $this->safeDocxValue($value)
+                );
+            }
         }
 
-        /* ================= SAVE FILES ================= */
+        /*
+        |--------------------------------------------------------------------------
+        | STORAGE PATHS
+        |--------------------------------------------------------------------------
+        */
         $generatedPath = storage_path('app/public/generated');
+
         if (!file_exists($generatedPath)) {
             mkdir($generatedPath, 0777, true);
         }
 
-        $docxPath = "{$generatedPath}/Agreement_{$company->id}.docx";
-        $pdfPath  = "{$generatedPath}/Agreement_{$company->id}.pdf";
+        $fileName = 'Agreement_' . $company->id;
 
+        $docxPath = "{$generatedPath}/{$fileName}.docx";
+        $pdfPath  = "{$generatedPath}/{$fileName}.pdf";
+
+        /*
+        |--------------------------------------------------------------------------
+        | SAVE DOCX
+        |--------------------------------------------------------------------------
+        */
         $template->saveAs($docxPath);
 
-        /* ================= CONVERT TO PDF ================= */
-        $command = 'libreoffice --headless --convert-to pdf "' . $docxPath . '" --outdir "' . $generatedPath . '"';
-        exec($command);
+        if (!file_exists($docxPath)) {
 
-        if (!file_exists($pdfPath)) {
-            return response()->json(['error' => 'PDF conversion failed'], 500);
+            \Log::error('DOCX generation failed', [
+                'docx_path' => $docxPath
+            ]);
+
+            return response()->json([
+                'status' => false,
+                'message' => 'DOCX generation failed'
+            ], 500);
         }
 
+        /*
+        |--------------------------------------------------------------------------
+        | PDF CONVERSION
+        |--------------------------------------------------------------------------
+        */
+        $libreOfficePath = trim(shell_exec('which libreoffice'));
+
+        if (!$libreOfficePath) {
+            $libreOfficePath = '/usr/bin/libreoffice';
+        }
+
+        $generatedPathReal = realpath($generatedPath);
+        $docxPathReal = realpath($docxPath);
+
+        $command = sprintf(
+            '%s --headless --convert-to pdf %s --outdir %s 2>&1',
+            escapeshellcmd($libreOfficePath),
+            escapeshellarg($docxPathReal),
+            escapeshellarg($generatedPathReal)
+        );
+
+        $output = [];
+        $returnCode = null;
+
+        exec($command, $output, $returnCode);
+
+        \Log::info('Agreement PDF Conversion', [
+            'command' => $command,
+            'output' => $output,
+            'return_code' => $returnCode,
+            'docx_exists' => file_exists($docxPath),
+            'pdf_exists' => file_exists($pdfPath),
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | CHECK PDF
+        |--------------------------------------------------------------------------
+        */
+        if ($returnCode !== 0 || !file_exists($pdfPath)) {
+
+            \Log::error('PDF conversion failed', [
+                'output' => $output,
+                'return_code' => $returnCode,
+            ]);
+
+            return response()->json([
+                'status' => false,
+                'message' => 'PDF conversion failed',
+                'debug' => $output
+            ], 500);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | SUCCESS RESPONSE
+        |--------------------------------------------------------------------------
+        */
         return response()->json([
             'status' => true,
             'message' => 'Agreement generated successfully',
-            'download_url' => asset("storage/generated/Agreement_{$company->id}.pdf")
+            'download_url' =>
+                asset("storage/generated/{$fileName}.pdf"),
+            'docx_url' =>
+                asset("storage/generated/{$fileName}.docx"),
         ]);
+
+    } catch (\Throwable $e) {
+
+        \Log::error('Agreement generation error', [
+            'message' => $e->getMessage(),
+            'line' => $e->getLine(),
+            'file' => $e->getFile(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return response()->json([
+            'status' => false,
+            'message' => 'Agreement generation failed',
+            'error' => $e->getMessage(),
+        ], 500);
     }
+}
 
     public function uploadEsignDocument(Request $request, $roleId, $companyId)
     {
@@ -358,5 +558,21 @@ class AgreementController extends Controller
             'message' => 'eSign was not completed'
         ]);
     }
+    
+     private function safeDocxValue($value): string
+    {
+
+        return htmlspecialchars(
+
+            (string) ($value ?? ''),
+
+            ENT_QUOTES | ENT_XML1,
+
+            'UTF-8'
+
+        );
+
+    }
+    
 }
 

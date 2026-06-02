@@ -26,7 +26,9 @@ class ZohoPayment extends Model
         'reference_number',
         'payment_number',
         'org_code',
-        'org_name'
+        'org_name',
+        'location_id',
+        'location_name'
 
     ];
 }

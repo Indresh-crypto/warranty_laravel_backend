@@ -17,6 +17,9 @@ use Illuminate\Support\Facades\Mail;
 use App\Models\WDevice;
 use Carbon\Carbon;
 
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+
 class CompanyEmployeeController extends Controller
 {
     /**
@@ -54,7 +57,7 @@ class CompanyEmployeeController extends Controller
     |--------------------------------------------------------------------------
     */
     $emp = CompanyEmployee::create([
-        'company_id'        => $request->company_id,
+        'company_id' => Company::where('role', 2)->value('id'),
         'first_name'        => $request->first_name,
         'middle_name'       => $request->middle_name,
         'last_name'         => $request->last_name,
@@ -973,4 +976,155 @@ public function salesBarChart(Request $request)
             'data' => $data
         ]);
     }
+    //
+   public function sendCompanyOtp(Request $request)
+   {
+    $request->validate([
+        'login_value' => 'required'
+    ]);
+
+    $loginValue = trim($request->login_value);
+
+    $isEmail = filter_var($loginValue, FILTER_VALIDATE_EMAIL);
+    $isPhone = preg_match('/^[6-9]\d{9}$/', $loginValue);
+
+    if (!$isEmail && !$isPhone) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Enter valid email or mobile number'
+        ], 422);
+    }
+
+    // ✅ FIXED COLUMN NAMES
+    $company = CompanyEmployee::when($isEmail, function ($q) use ($loginValue) {
+            $q->where('official_email', $loginValue);
+        })
+        ->when($isPhone, function ($q) use ($loginValue) {
+            $q->where('official_phone', $loginValue);
+        })
+        ->first();
+
+    if (!$company) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Employee not found'
+        ], 404);
+    }
+
+    $otp = random_int(100000, 999999);
+
+    $company->update([
+        'otp' => $otp,
+        'otp_expires_at' => now()->addMinutes(5)
+    ]);
+
+    // 📲 WhatsApp
+   if ($isPhone) {
+
+        Cache::put("otp_phone_{$loginValue}", $otp, now()->addMinutes(5));
+
+        $destination = '91' . $loginValue;
+        $apiKey = 'xmzzeoeowfppicbquvp3zupvntzeqh2j';
+        $appName = 'WarrantyMitra';
+
+        $template = json_encode([
+            'id'     => '8d3e0965-dd63-4fce-a0aa-5e94aac810bc',
+            'params' => [$otp],
+        ]);
+
+      $res=  Http::asForm()->withHeaders([
+            'apikey' => $apiKey
+        ])->post('https://api.gupshup.io/wa/api/v1/template/msg', [
+            'channel'     => 'whatsapp',
+            'source'      => '918828272570',
+            'destination' => $destination,
+            'src.name'    => $appName,
+            'template'    => $template,
+        ]);
+    }
+
+    // 📧 Email
+    if ($isEmail) {
+        Mail::send('emails.company_otp', [
+            'name' => $company->full_name,
+            'otp'  => $otp
+        ], function ($mail) use ($company) {
+            $mail->to($company->official_email)
+                 ->subject('Your Login OTP');
+        });
+    }
+
+    
+    return response()->json([
+        'status' => true,
+        'message' => 'OTP sent successfully'
+    ]);
+}
+   
+  public function verifyCompanyOtp(Request $request)
+  {
+    $request->validate([
+        'login_value' => 'required',
+        'otp' => 'required|digits:6'
+    ]);
+
+    $loginValue = trim($request->login_value);
+
+    $isEmail = filter_var($loginValue, FILTER_VALIDATE_EMAIL);
+    $isPhone = preg_match('/^[6-9]\d{9}$/', $loginValue);
+
+    if (!$isEmail && !$isPhone) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Enter valid email or mobile number'
+        ], 422);
+    }
+
+    // FIXED COLUMN NAMES
+    $company = CompanyEmployee::when($isEmail, function ($q) use ($loginValue) {
+            $q->where('official_email', $loginValue);
+        })
+        ->when($isPhone, function ($q) use ($loginValue) {
+            $q->where('official_phone', $loginValue);
+        })
+        ->first();
+
+    if (!$company) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Employee not found'
+        ], 404);
+    }
+
+    // Invalid OTP
+    if ($company->otp != $request->otp) {
+        return response()->json([
+            'status' => false,
+            'message' => 'Invalid OTP'
+        ], 400);
+    }
+
+    // Expired OTP
+    if (!$company->otp_expires_at || now()->greaterThan($company->otp_expires_at)) {
+        return response()->json([
+            'status' => false,
+            'message' => 'OTP expired'
+        ], 400);
+    }
+
+    // SUCCESS
+    $company->update([
+        'otp' => null,
+        'otp_expires_at' => null,
+        'is_email_verified' => 1
+    ]);
+
+    return response()->json([
+        'status' => true,
+        'message' => 'Verification successful',
+        'data' => $company
+    ]);
+}
+
+    //
 }

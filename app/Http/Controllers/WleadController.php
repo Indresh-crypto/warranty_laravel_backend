@@ -16,8 +16,10 @@ use Illuminate\Support\Facades\Validator;
 use App\Mail\WelcomeCompanyMail;
 use App\Mail\LeadCreateMail;
 use App\Mail\LeadCreateSystemMail;
+use App\Mail\LeadInProcessMail;
 
-
+use App\Models\OrgUsersMaster;
+use App\Services\OrgCodeService;
 use Illuminate\Support\Facades\Mail;
 
 use App\Jobs\SendCompanyCreatedWhatsapp;
@@ -25,138 +27,717 @@ use App\Jobs\SendAgentPendingWhatsapp;
 use DB;
 class WleadController extends Controller
 {
-        /**
-         * Store a new lead/user
-         */
+
+
     public function store(Request $request)
     {
-    DB::beginTransaction();
-
-    try {
-
-        $validator = Validator::make($request->all(), [
-            'name'            => 'required|string|max:255',
-            'phone'           => 'required|string|max:20|unique:w_leads,phone',
-            'email'           => 'required|email|unique:w_leads,email',
-            'created_by_id'   => 'required',
-            'created_by_name' => 'required',
-            'owner_name'      => 'required',
-            'lead_type'       => 'required',
-            'manager_id'      => 'nullable',
-            'agent_id'        => 'nullable',
-            'pincode'         => 'required|digits:6'
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status'  => false,
-                'message' => 'Validation error',
-                'errors'  => $validator->errors()
-            ], 422);
-        }
-
-        // 🔹 Validate pincode
-        $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
-
-        if (!$pincodeData) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Invalid Pincode'
-            ], 422);
-        }
-
-        $stateIn    = $pincodeData->state_in;
-        $districtIn = $pincodeData->district_in;
-
-        // 🔹 Generate Random Password
-        $plainPassword = random_int(100000, 999999);
-
-        // 🔹 Split Owner Name
-        $ownerFullName = trim($request->owner_name ?? '');
-        $parts = preg_split('/\s+/', $ownerFullName);
-
-        $ownerFirstName  = $parts[0] ?? null;
-        $ownerMiddleName = null;
-        $ownerLastName   = null;
-
-        if (count($parts) == 2) {
-            $ownerLastName = $parts[1];
-        } elseif (count($parts) > 2) {
-            $ownerLastName   = array_pop($parts);
-            $ownerMiddleName = implode(' ', array_slice($parts, 1));
-        }
-
-        // 🔹 Create Lead
-        $lead = WLead::create([
-            'name'            => $request->name,
-            'phone'           => $request->phone,
-            'state'           => $request->state,
-            'district'        => $request->district,
-            'pincode'         => $request->pincode,
-            'email'           => $request->email,
-            'address1'        => $request->address1,
-            'address2'        => $request->address2,
-            'status'          => $request->status ?? 1,
-            'lead_amount'     => $request->lead_amount,
-            'password'        => Hash::make($plainPassword),
-            'created_by_id'   => $request->created_by_id,
-            'created_by_name' => $request->created_by_name,
-            'lead_type'       => $request->lead_type,
-            'package_id'      => $request->package_id,
-            'package_name'    => $request->package_name,
-            'badge_name'      => $request->badge_name,
-            'badge_id'        => $request->badge_id,
-            'benefits'        => $request->benefits,
-            'eligibility'     => $request->eligibility,
-            'company_id'      => $request->company_id,
-            'manager_id'      => $request->manager_id,
-            'agent_id'        => $request->agent_id,
-            'state_in'        => $stateIn,
-            'district_in'     => $districtIn,
-            'formdata'        => $request->formdata,
-            'form_ref'        => $request->form_ref,
-            'pay_now'         => $request->pay_now,
-            'pay_later'       => $request->pay_later,
-            'owner_name'      => $ownerFullName
-        ]);
-
-        // 🔹 Generate Lead Code
-        $leadCode = "{$stateIn}-{$districtIn}-{$request->pincode}-{$lead->id}";
-        $lead->update(['lead_code' => $leadCode]);
-
-        DB::commit();   // 🔥 COMMIT BEFORE MAIL
-
-        // 🔹 Send Mail After Commit
-            $companyEmployee = CompanyEmployee::find($request->manager_id);
-            $company = Company::find($request->company_id);
-            
-            if ($companyEmployee?->official_email) {
-                Mail::to($companyEmployee->official_email)
-                    ->cc('indresh.malviya@gmail.com')
-                    ->queue(
-                        (new LeadCreateSystemMail($lead->id, $company->id))
-                            ->afterCommit()
-                    );
-            }
-
-        return response()->json([
-            'status'  => true,
-            'message' => 'Lead created successfully and email sent.',
-            'data'    => $lead
-        ], 201);
-
-    } catch (\Throwable $e) {
-
-        DB::rollBack();
-
-        return response()->json([
-            'status'  => false,
-            'message' => 'Failed to create lead',
-            'error'   => $e->getMessage()
-        ], 500);
-    }
-}
+        // ================= NORMALIZE =================
     
+        $email   = strtolower(trim($request->email));
+    
+        $phone   = trim($request->phone);
+    
+        $product = strtolower(trim($request->products));
+    
+        // ================= VALIDATION =================
+    
+        $validator = Validator::make($request->all(), [
+    
+            'name'             => 'required|string|max:255',
+    
+            'phone'            => 'required|string|max:20',
+    
+            'email'            => 'required|email',
+    
+            'created_by_id'    => 'required',
+    
+            'created_by_name'  => 'required',
+    
+            'owner_name'       => 'required',
+    
+            'lead_type'        => 'required',
+    
+            'pincode'          => 'required|digits:6',
+    
+            'products'         => 'required|string|in:emi_locker,warranty',
+    
+            'is_existing_user' => 'nullable|in:0,1'
+    
+        ]);
+    
+        if ($validator->fails()) {
+    
+            return response()->json([
+    
+                'status'  => false,
+    
+                'message' => 'Validation error',
+    
+                'errors'  => $validator->errors()
+    
+            ], 422);
+        }
+    
+        $isForceFlow = (
+    
+            $request->is_existing_user == 1
+            &&
+            $product == 'warranty'
+    
+        );
+    
+        DB::beginTransaction();
+    
+        try {
+    
+            // =====================================================
+            // DUPLICATE LEAD CHECK
+            // =====================================================
+    
+            $existingLead = DB::table('w_leads')
+    
+                ->where(function ($q) use ($email, $phone) {
+    
+                    $q->where('email', $email)
+    
+                      ->orWhere('phone', $phone);
+    
+                })
+    
+                ->where('products', $product)
+    
+                ->lockForUpdate()
+    
+                ->first();
+    
+            if ($existingLead) {
+    
+                DB::rollBack();
+    
+                return response()->json([
+    
+                    'status'  => false,
+    
+                    'message' => 'Lead already exists for this product',
+    
+                    'source'  => 'lead',
+    
+                    'data' => [
+    
+                        'id'       => $existingLead->id ?? null,
+    
+                        'name'     => $existingLead->name ?? null,
+    
+                        'email'    => $existingLead->email ?? null,
+    
+                        'phone'    => $existingLead->phone ?? null,
+    
+                        'products' => $existingLead->products ?? null
+                    ]
+    
+                ], 200);
+            }
+    
+            // =====================================================
+            // ORG USER CHECK
+            // =====================================================
+    
+            $orgUser = DB::table('org_users_master')
+    
+                ->where('email', $email)
+    
+                ->orWhere('phone', $phone)
+    
+                ->first();
+    
+            if ($orgUser && !$isForceFlow) {
+    
+                DB::rollBack();
+    
+                return response()->json([
+    
+                    'status'  => false,
+    
+                    'message' => 'User already exists (Org User)',
+    
+                    'source'  => 'org_user',
+    
+                    'data'    => $orgUser
+    
+                ], 200);
+            }
+    
+            // =====================================================
+            // COMPANY CHECK
+            // =====================================================
+    
+            if (!$isForceFlow) {
+    
+                $companyUser = DB::table('companies')
+    
+                    ->where('contact_email', $email)
+    
+                    ->orWhere('contact_phone', $phone)
+    
+                    ->first();
+    
+                if ($companyUser) {
+    
+                    DB::rollBack();
+    
+                    return response()->json([
+    
+                        'status'  => false,
+    
+                        'message' => 'User already exists (Company)',
+    
+                        'source'  => 'company',
+    
+                        'data'    => $companyUser
+    
+                    ], 200);
+                }
+            }
+    
+            // =====================================================
+            // PINCODE
+            // =====================================================
+    
+            $pincodeData = IndiaPincode::where(
+    
+                'pincode',
+                $request->pincode
+    
+            )->first();
+    
+            if (!$pincodeData) {
+    
+                DB::rollBack();
+    
+                return response()->json([
+    
+                    'status'  => false,
+    
+                    'message' => 'Invalid Pincode'
+    
+                ], 422);
+            }
+    
+            $stateIn    = $pincodeData->state_in;
+    
+            $districtIn = $pincodeData->district_in;
+    
+            $plainPassword = random_int(100000, 999999);
+    
+            // =====================================================
+            // OWNER SPLIT
+            // =====================================================
+    
+            $ownerFullName = trim($request->owner_name ?? '');
+    
+            $parts = preg_split('/\s+/', $ownerFullName);
+    
+            $ownerFirstName  = $parts[0] ?? null;
+    
+            $ownerMiddleName = null;
+    
+            $ownerLastName   = null;
+    
+            if (count($parts) == 2) {
+    
+                $ownerLastName = $parts[1];
+    
+            } elseif (count($parts) > 2) {
+    
+                $ownerLastName   = array_pop($parts);
+    
+                $ownerMiddleName = implode(
+                    ' ',
+                    array_slice($parts, 1)
+                );
+            }
+    
+            // =====================================================
+            // CREATE LEAD
+            // =====================================================
+    
+            $lead = WLead::create([
+    
+                'name'               => $request->name,
+    
+                'phone'              => $phone,
+    
+                'state'              => $request->state,
+    
+                'district'           => $request->district,
+    
+                'pincode'            => $request->pincode,
+    
+                'email'              => $email,
+    
+                'address1'           => $request->address1,
+    
+                'address2'           => $request->address2,
+    
+                'status'             => $request->status ?? 1,
+    
+                'lead_amount'        => $request->lead_amount,
+    
+                'password'           => Hash::make($plainPassword),
+    
+                'created_by_id'      => $request->created_by_id,
+    
+                'created_by_name'    => $request->created_by_name,
+    
+                'lead_type'          => $request->lead_type,
+    
+                'package_id'         => $request->package_id,
+    
+                'package_name'       => $request->package_name,
+    
+                'badge_name'         => $request->badge_name,
+    
+                'badge_id'           => $request->badge_id,
+    
+                'benefits'           => $request->benefits,
+    
+                'eligibility'        => $request->eligibility,
+    
+                'company_id'         => $request->company_id,
+    
+                'manager_id'         => $request->manager_id,
+    
+                'agent_id'           => $request->agent_id,
+    
+                'state_in'           => $stateIn,
+    
+                'district_in'        => $districtIn,
+    
+                'formdata'           => $request->formdata,
+    
+                'form_ref'           => $request->form_ref,
+    
+                'pay_now'            => $request->pay_now,
+    
+                'pay_later'          => $request->pay_later,
+    
+                'owner_name'         => $ownerFullName,
+    
+                'owner_first_name'   => $ownerFirstName,
+    
+                'owner_middle_name'  => $ownerMiddleName,
+    
+                'owner_last_name'    => $ownerLastName,
+    
+                'products'           => $product
+    
+            ]);
+    
+            $leadCode =
+    
+                "{$districtIn}-{$request->pincode}-{$lead->id}";
+    
+            $lead->update([
+    
+                'lead_code' => $leadCode
+    
+            ]);
+            
+            
+            
+              // =====================================================
+                // SEND INTERNAL MAIL
+                // =====================================================
+    
+                try {
+    
+                    $companyEmployee = CompanyEmployee::find(
+                        $request->manager_id
+                    );
+                    
+                 
+    
+                    $companyId =
+    
+                        $company->id
+                        ??
+                        $request->company_id
+                        ??
+                        null;
+    
+                
+    
+                    if (
+    
+                        $companyEmployee
+                        &&
+                        !empty($companyEmployee->official_email)
+                        &&
+                        $companyId
+    
+                    ) {
+    
+                        Mail::to(
+    
+                            $companyEmployee->official_email
+    
+                        )
+    
+                        ->cc(
+                            'indresh@goelectronix.com'
+                        )
+    
+                        ->queue(
+    
+                            (
+    
+                                new LeadCreateSystemMail(
+    
+                                    $lead->id,
+    
+                                    $companyId
+    
+                                )
+    
+                            )->afterCommit()
+    
+                        );
+    
+                    
+    
+                    } else {
+    
+                      
+                    }
+    
+                } catch (\Throwable $mailError) {
+    
+                  
+                }
+    
+            // =====================================================
+            // FORCE FLOW
+            // =====================================================
+    
+            if ($isForceFlow) {
+    
+                $agent = !empty($request->agent_id)
+    
+                    ? Company::find($request->agent_id)
+    
+                    : null;
+    
+                $company = Company::create([
+    
+                    'business_name'     => $lead->name,
+    
+                    'contact_email'     => $lead->email,
+    
+                    'contact_person'    => $lead->owner_name,
+    
+                    'contact_phone'     => $lead->phone,
+    
+                    'password'          => Hash::make($plainPassword),
+    
+                    'address_line1'     => $lead->address1,
+    
+                    'address_line2'     => $lead->address2,
+    
+                    'city'              => $lead->district,
+    
+                    'district'          => $lead->district,
+    
+                    'state'             => $lead->state,
+    
+                    'pincode'           => $lead->pincode,
+    
+                    'status'            => 1,
+    
+                    'role'              => $lead->lead_type,
+    
+                    'company_id'        => $lead->company_id,
+    
+                    'senior_id'         => $lead->agent_id,
+    
+                    'agent_code'        => $agent->company_code ?? "",
+    
+                    'owner_first_name'  => $lead->owner_first_name,
+    
+                    'owner_middle_name' => $lead->owner_middle_name,
+    
+                    'owner_last_name'   => $lead->owner_last_name,
+    
+                    'pay_now'           => $lead->pay_now,
+    
+                    'pay_later'         => $lead->pay_later,
+                    
+                    'created_by_id'     => $lead->created_by_id,
+                    
+                    'created_by_name'   => $lead->created_by_name,
+                    
+                    'address_line1'     => $lead->address1,
+                
+                    'address_line2'   => $lead->address2
+    
+                ]);
+    
+                // =====================================================
+                // FIND EXISTING ORG USER
+                // =====================================================
+    
+                $orgUser = OrgUsersMaster::get()
+    
+                    ->first(function ($item) use ($lead) {
+    
+                        $dbEmail = strtolower(
+                            trim($item->email ?? '')
+                        );
+    
+                        $dbPhone = preg_replace(
+                            '/[^0-9]/',
+                            '',
+                            $item->phone ?? ''
+                        );
+    
+                        $dbPhone = substr($dbPhone, -10);
+    
+                        $leadEmail = strtolower(
+                            trim($lead->email ?? '')
+                        );
+    
+                        $leadPhone = preg_replace(
+                            '/[^0-9]/',
+                            '',
+                            $lead->phone ?? ''
+                        );
+    
+                        $leadPhone = substr($leadPhone, -10);
+    
+                        return (
+    
+                            (!empty($leadEmail)
+                            &&
+                            $dbEmail === $leadEmail)
+    
+                            ||
+    
+                            (!empty($leadPhone)
+                            &&
+                            $dbPhone === $leadPhone)
+                        );
+                    });
+    
+                // =====================================================
+                // REUSE OR GENERATE ORG CODE
+                // =====================================================
+    
+                if ($orgUser && !empty($orgUser->org_code)) {
+    
+                    $orgCode = $orgUser->org_code;
+    
+                } else {
+    
+                    $orgCode = (new OrgCodeService())->generate(
+    
+                        $lead->lead_type,
+    
+                        $lead->state
+    
+                    );
+                }
+    
+                // =====================================================
+                // FIX: PREVENT DUPLICATE ORG USER
+                // =====================================================
+    
+                $orgUser = OrgUsersMaster::where(function ($q) use ($lead) {
+    
+                    $q->where('email', $lead->email)
+    
+                      ->orWhere('phone', $lead->phone);
+    
+                })
+    
+                ->lockForUpdate()
+    
+                ->first();
+    
+                if ($orgUser) {
+    
+                    $orgUser->update([
+    
+                        'business_name' => $lead->name,
+    
+                        'state'         => $lead->state,
+    
+                        'city'          => $lead->district,
+    
+                        'pincode'       => $lead->pincode,
+    
+                        'products'      => ['warranty', 'emi_locker'],
+    
+                        'role'          => $lead->lead_type,
+    
+                    ]);
+    
+                } else {
+    
+                    $orgUser = OrgUsersMaster::create([
+    
+                        'business_name' => $lead->name,
+    
+                        'org_code'      => $orgCode,
+    
+                        'phone'         => $lead->phone,
+    
+                        'email'         => $lead->email,
+    
+                        'state'         => $lead->state,
+    
+                        'city'          => $lead->district,
+    
+                        'pincode'       => $lead->pincode,
+    
+                        'company_id'    => $lead->company_id ?? 0,
+    
+                        'products'      => ['warranty'],
+    
+                        'role'          => $lead->lead_type,
+    
+                    ]);
+                }
+    
+                // =====================================================
+                // UPDATE COMPANY WITH ZOHO ID
+                // =====================================================
+    
+                $company->update([
+    
+                    'company_code' => $orgCode,
+    
+                    'zoho_id'      => $orgUser->zoho_contact_id ?? null
+    
+                ]);
+    
+                $lead->update([
+    
+                    'status' => 'in progress'
+    
+                ]);
+    
+                // =====================================================
+                // SEND LOGIN MAIL
+                // =====================================================
+    
+                if (!empty($lead->email)) {
+    
+                    $signinUrl =
+    
+                        rtrim(
+                            config('app.retailer_panel_url'),
+                            '/'
+                        )
+    
+                        . '/signin?email='
+    
+                        . urlencode($lead->email);
+    
+                    Mail::to($lead->email)
+    
+                        ->send(
+    
+                            new LeadCreateMail(
+    
+                                $lead,
+    
+                                $signinUrl,
+    
+                                $plainPassword
+    
+                            )
+    
+                        );
+                }
+    
+              
+    
+                DB::commit();
+    
+                SendCompanyCreatedWhatsapp::dispatch(
+                    $company->id
+                );
+    
+                return response()->json([
+    
+                    'status'  => true,
+    
+                    'message' => 'Lead created successfully',
+    
+                    'data'    => $lead
+    
+                ], 201);
+            }
+    
+            DB::commit();
+    
+            return response()->json([
+    
+                'status'  => true,
+    
+                'message' => 'Lead created successfully',
+    
+                'data'    => $lead
+    
+            ], 201);
+    
+        } catch (\Throwable $e) {
+    
+            DB::rollBack();
+    
+            Log::error(
+    
+                'LEAD CREATION FAILED',
+    
+                [
+    
+                    'message' =>
+    
+                        $e->getMessage(),
+    
+                    'line' =>
+    
+                        $e->getLine(),
+    
+                    'file' =>
+    
+                        $e->getFile(),
+    
+                    'trace' =>
+    
+                        substr(
+                            $e->getTraceAsString(),
+                            0,
+                            3000
+                        ),
+    
+                    'request' =>
+    
+                        $request->all()
+                ]
+            );
+    
+            return response()->json([
+    
+                'status'  => false,
+    
+                'message' => 'Failed to create lead',
+    
+                'error'   => $e->getMessage()
+    
+            ], 500);
+        }
+    }
+
     public function update(Request $request, $id)
     {
         $lead = WLead::find($id);
@@ -223,7 +804,7 @@ class WleadController extends Controller
     
         foreach ($allowedFields as $field) {
     
-            // ✅ Only update if value is NOT null
+            // Only update if value is NOT null
             if ($request->has($field) && !is_null($request->$field)) {
                 $updateData[$field] = $request->$field;
             }
@@ -470,22 +1051,25 @@ class WleadController extends Controller
         'data' => $leads->items()
     ]);
 }
-    /**
-     * Update status
-     */
-   
-   public function updateStatus(Request $request, $id)
-   {
+
+
+public function updateStatus(Request $request, $id)
+{
     $validator = Validator::make($request->all(), [
-        'status' => 'required',
-        'remark' => 'nullable|string',
-        'updated_by_id' => 'nullable|integer',
-        'updated_by_name' => 'nullable|string'
-    ], [
-        'status.required' => 'Status is required'
+        'status'          => 'required',
+        'remark'          => 'nullable|string',
+        'updated_by_id'   => 'nullable|integer',
+        'updated_by_name' => 'nullable|string',
+        'agent_id'        => 'nullable|integer',
     ]);
 
     if ($validator->fails()) {
+
+        \Log::warning('Lead Status Validation Failed', [
+            'errors'  => $validator->errors(),
+            'request' => $request->all()
+        ]);
+
         return response()->json([
             'status'  => false,
             'message' => 'Validation error',
@@ -496,8 +1080,13 @@ class WleadController extends Controller
     $lead = WLead::find($id);
 
     if (!$lead) {
+
+        \Log::warning('Lead Not Found', [
+            'lead_id' => $id
+        ]);
+
         return response()->json([
-            'status' => false,
+            'status'  => false,
             'message' => 'User not found'
         ], 404);
     }
@@ -506,109 +1095,342 @@ class WleadController extends Controller
 
     try {
 
-        // Update lead
+        \Log::info('Lead Status Update Started', [
+            'lead_id' => $lead->id,
+            'status'  => $request->status
+        ]);
+
+        // =========================
+        // UPDATE LEAD
+        // =========================
+
         $lead->status = $request->status;
-
-        if ($request->filled('remark')) {
-            $lead->remark = $request->remark;
-        }
-
-        if ($request->filled('updated_by_id')) {
-            $lead->updated_by_id = $request->updated_by_id;
-        }
-
-        if ($request->filled('updated_by_name')) {
-            $lead->updated_by_name = $request->updated_by_name;
-        }
-
+        $lead->remark = $request->remark ?? $lead->remark;
+        $lead->updated_by_id = $request->updated_by_id ?? $lead->updated_by_id;
+        $lead->updated_by_name = $request->updated_by_name ?? $lead->updated_by_name;
         $lead->save();
 
-        /*
-        |--------------------------------------------------------------------------
-        | Create Company if status = in progress
-        |--------------------------------------------------------------------------
-        */
+        \Log::info('Lead Updated Successfully', [
+            'lead_id'     => $lead->id,
+            'lead_status' => $lead->status
+        ]);
 
-        if ($request->status === "in progress") {
+        // =========================
+        // IN PROGRESS FLOW
+        // =========================
+
+        if (strtolower(trim($request->status)) === "in progress") {
+
+            \Log::info('Lead Conversion Started', [
+                'lead_id' => $lead->id
+            ]);
+
+            // =========================
+            // VALIDATE PINCODE
+            // =========================
 
             $pincodeData = IndiaPincode::where('pincode', $lead->pincode)->first();
 
-           $agent = null;;
-           
-           if (!empty($request->agent_id)) {
-                $agent = Company::find($request->agent_id);
-            }
-            
-            
             if (!$pincodeData) {
+
+                DB::rollBack();
+
+                \Log::warning('Invalid Pincode', [
+                    'lead_id' => $lead->id,
+                    'pincode' => $lead->pincode
+                ]);
+
                 return response()->json([
-                    'status' => false,
+                    'status'  => false,
                     'message' => 'Invalid pincode'
                 ], 422);
             }
 
-            $stateIn    = $pincodeData->state_in;
-            $districtIn = $pincodeData->district_in;
+            // =========================
+            // GET AGENT
+            // =========================
+
+            $agent = !empty($request->agent_id)
+                ? Company::find($request->agent_id)
+                : null;
+
+            // =========================
+            // GENERATE PASSWORD
+            // =========================
 
             $plainPassword = random_int(100000, 999999);
 
+            // =========================
+            // COMPANY DATA
+            // =========================
+
             $companyData = [
-                'business_name' => $lead->name,
-                'contact_email' => $lead->email,
-                'contact_person' => $lead->owner_name,
-                'contact_phone' => $lead->phone,
-                'password' => Hash::make($plainPassword),
-                'address_line1' => $lead->address1,
-                'address_line2' => $lead->address2,
-                'city' => $lead->district,
-                'district' => $lead->district,
-                'state' => $lead->state,
-                'pincode' => $lead->pincode,
-                'status' => 1,
-                'role' => $lead->lead_type, // assuming retailer
-                'created_by_id' => $lead->created_by_id ?? 0,
-                'created_by_name' => $lead->created_by_name ?? '',
-                'company_id' => $lead->company_id,
-                'senior_id' => $lead->agent_id,
-                'agent_code' => $agent->company_code ?? "",
-                'pay_now' => $lead->pay_now,
-                'logo'=>$lead->logo,
-                'domain'=>$lead->domain,
-                'title'=>$lead->title,
-                'owner_first_name' => $lead->owner_first_name,
+                'business_name'     => $lead->name,
+                'contact_email'     => $lead->email,
+                'contact_person'    => $lead->owner_name,
+                'contact_phone'     => $lead->phone,
+                'password'          => Hash::make($plainPassword),
+                'address_line1'     => $lead->address1,
+                'address_line2'     => $lead->address2,
+                'city'              => $lead->district,
+                'district'          => $lead->district,
+                'state'             => $lead->state,
+                'pincode'           => $lead->pincode,
+                'status'            => 1,
+                'role'              => $lead->lead_type,
+                'created_by_id'     => $lead->created_by_id ?? 0,
+                'created_by_name'   => $lead->created_by_name ?? '',
+                'company_id'        => $lead->company_id,
+                'senior_id'         => $lead->agent_id,
+                'agent_id'          => $lead->agent_id,
+                'agent_code'        => $agent->company_code ?? "",
+                'pay_now'           => $lead->pay_now,
+                'logo'              => $lead->logo,
+                'domain'            => $lead->domain,
+                'title'             => $lead->title,
+                'owner_first_name'  => $lead->owner_first_name,
                 'owner_middle_name' => $lead->owner_middle_name,
-                'owner_last_name' => $lead->owner_last_name
+                'owner_last_name'   => $lead->owner_last_name,
             ];
 
-            $user = Company::create($companyData);
+            // =========================
+            // CHECK EXISTING COMPANY
+            // =========================
 
-            $userCode = "RET-{$user->id}-{$stateIn}-{$districtIn}";
+            $company = Company::where(function ($q) use ($lead) {
+                    $q->where('contact_email', $lead->email)
+                      ->orWhere('contact_phone', $lead->phone);
+                })
+                ->first();
+            if (!$company) {
 
-            $user->update([
-                'company_code' => $userCode
+                $company = Company::create($companyData);
+
+                \Log::info('New Company Created', [
+                    'company_id' => $company->id,
+                    'email'      => $company->contact_email,
+                    'phone'      => $company->contact_phone
+                ]);
+
+            } else {
+
+                $company->update([
+                    'business_name'    => $lead->name,
+                    'contact_person'   => $lead->owner_name,
+                    'contact_phone'    => $lead->phone,
+                    'address_line1'    => $lead->address1,
+                    'address_line2'    => $lead->address2,
+                    'city'             => $lead->district,
+                    'district'         => $lead->district,
+                    'state'            => $lead->state,
+                    'pincode'          => $lead->pincode,
+                    'role'             => $lead->lead_type,
+                    'agent_id'         => $lead->agent_id,
+                    'agent_code'       => $agent->company_code ?? "",
+                    'updated_at'       => now(),
+                ]);
+
+                \Log::info('Existing Company Updated', [
+                    'company_id' => $company->id
+                ]);
+            }
+
+            // =========================
+            // CLEAN EMAIL & PHONE
+            // =========================
+
+            $leadEmail = strtolower(trim($lead->email));
+
+            $leadPhone = preg_replace('/[^0-9]/', '', $lead->phone);
+
+            $leadPhone = substr($leadPhone, -10);
+
+
+            \Log::info('Lead Clean Data', [
+                'email' => $leadEmail,
+                'phone' => $leadPhone
             ]);
 
+            // =========================
+            // FIND MASTER BY EMAIL
+            // =========================
 
-            $signinUrl = rtrim(config('app.retailer_panel_url'), '/') 
-            . '/signin?email=' 
-            . urlencode($lead->email);
+            $existingMaster = null;
+
+            if (!empty($leadEmail)) {
+
+                $existingMaster = OrgUsersMaster::whereRaw(
+                    'LOWER(TRIM(email)) = ?',
+                    [$leadEmail]
+                )->first();
+
+                \Log::info('Master Search By Email', [
+                    'email'     => $leadEmail,
+                    'found'     => !empty($existingMaster),
+                    'master_id' => $existingMaster->id ?? null,
+                    'org_code'  => $existingMaster->org_code ?? null
+                ]);
+            }
+
+            // =========================
+            // FIND MASTER BY PHONE
+            // =========================
+
+            if (!$existingMaster && !empty($leadPhone)) {
+
+                $existingMaster = OrgUsersMaster::where(function ($q) use ($leadPhone) {
+
+                    $q->where('phone', $leadPhone)
+                      ->orWhere('phone', '91' . $leadPhone)
+                      ->orWhere('phone', '+91' . $leadPhone);
+
+                })->first();
+
+                \Log::info('Master Search By Phone', [
+                    'phone'     => $leadPhone,
+                    'found'     => !empty($existingMaster),
+                    'master_id' => $existingMaster->id ?? null,
+                    'org_code'  => $existingMaster->org_code ?? null
+                ]);
+            }
+
+            // =========================
+            // FINAL MASTER LOG
+            // =========================
+
+
+            // =========================
+            // REUSE / GENERATE ORG CODE
+            // =========================
+
+            if ($existingMaster && !empty($existingMaster->org_code)) {
+
+                $orgCode = $existingMaster->org_code;
+
+               
+            } else {
+
+                $orgService = new OrgCodeService();
+
+                $orgCode = $orgService->generate(
+                    $lead->lead_type,
+                    $lead->state
+                );
+
+            }
+
+            // =========================
+            // UPDATE COMPANY CODE
+            // =========================
+
+            $company->update([
+                'company_code' => $orgCode
+            ]);
+
+            \Log::info('Company Code Updated', [
+                'company_id'   => $company->id,
+                'company_code' => $orgCode
+            ]);
+
+            // =========================
+            // CREATE / UPDATE MASTER
+            // =========================
+
+            if (!$existingMaster) {
+
+                $master = OrgUsersMaster::create([
+                    'business_name' => $lead->name,
+                    'org_code'      => $orgCode,
+                    'phone'         => $lead->phone,
+                    'email'         => $lead->email,
+                    'state'         => $lead->state,
+                    'city'          => $lead->district,
+                    'pincode'       => $lead->pincode,
+                    'company_id'    => $lead->company_id ?? 0,
+                    'products'      => $lead->products ?? ['warranty'],
+                    'role'          => $lead->lead_type,
+                ]);
+
+             
+
+            } else {
+
+                $existingMaster->update([
+                    'business_name' => $lead->name,
+                    'state'         => $lead->state,
+                    'city'          => $lead->district,
+                    'pincode'       => $lead->pincode,
+                    'products'      => $lead->products ?? $existingMaster->products,
+                    'role'          => $lead->lead_type,
+                ]);
+
+                $master = $existingMaster;
+
+                \Log::info('Existing Master Updated', [
+                    'master_id' => $master->id,
+                    'org_code'  => $master->org_code
+                ]);
+            }
+
+            // =========================
+            // SEND LOGIN MAIL
+            // =========================
+
+            if (!empty($lead->email)) {
+
+                $signinUrl = rtrim(config('app.retailer_panel_url'), '/')
+                    . '/signin?email=' . urlencode($lead->email);
+
+                Mail::to($lead->email)
+                    ->send(new LeadCreateMail(
+                        $lead,
+                        $signinUrl,
+                        $plainPassword
+                    ));
+
+            }
+
+            // =========================
+            // SEND INTERNAL MAIL
+            // =========================
+
+            $companyEmployee = CompanyEmployee::find($lead->created_by_id);
+
+            $parentCompany = Company::find($lead->company_id);
+
+            if ($companyEmployee?->official_email) {
+
+                Mail::to($companyEmployee->official_email)
+                    ->cc(optional($parentCompany)->contact_email)
+                    ->queue(new LeadInProcessMail(
+                        $lead->id,
+                        $parentCompany->id
+                    ));
+
             
-            Mail::to($lead->email)
-                ->send(new LeadCreateMail($lead, $signinUrl, $plainPassword));
+            }
 
             DB::commit();
-            
-            SendCompanyCreatedWhatsapp::dispatch($user->id);
 
+
+            SendCompanyCreatedWhatsapp::dispatch($company->id);
 
             return response()->json([
                 'status'  => true,
-                'message' => 'Company created successfully and credentials emailed',
-                'data'    => $user->refresh()
+                'message' => 'Company and master created successfully',
+                'data'    => [
+                    'lead'       => $lead,
+                    'company'    => $company,
+                    'master'     => $master,
+                    'org_code'   => $orgCode,
+                    'company_id' => $company->id
+                ]
             ], 201);
         }
 
         DB::commit();
+
+       
 
         return response()->json([
             'status'  => true,
@@ -620,14 +1442,14 @@ class WleadController extends Controller
 
         DB::rollBack();
 
+
         return response()->json([
-            'status' => false,
+            'status'  => false,
             'message' => 'Something went wrong',
-            'error' => $e->getMessage()
+            'error'   => $e->getMessage()
         ], 500);
     }
 }
-    
     public function sendWelcomeEmail($companyId)
     {
         $company = Company::findOrFail($companyId);
@@ -654,52 +1476,314 @@ class WleadController extends Controller
     }
 
     
-    public function verifyEmailOtp(Request $request)
-    {
-        $request->validate([
-            'email'      => 'required|email',
-            'otp'        => 'required|digits:6',
-            'user_id'    => 'required|exists:companies,id',
-            'company_id' => 'required|exists:companies,id',
-        ]);
-    
-        $company = Company::where('contact_email', $request->email)
-            ->where('id', $request->user_id)
+public function verifyEmailOtp(Request $request)
+{
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
+    $validator = Validator::make($request->all(), [
+
+        'email' => 'required|email',
+
+        'otp' => 'required|digits:6',
+
+        'user_id' => 'required|exists:companies,id',
+
+        'company_id' => 'required',
+    ]);
+
+    if ($validator->fails()) {
+
+        return response()->json([
+
+            'status' => false,
+
+            'message' => $validator->errors()->first(),
+
+            'errors' => $validator->errors()
+
+        ], 422);
+    }
+
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | FIND COMPANY
+        |--------------------------------------------------------------------------
+        */
+
+        $company = Company::where(
+
+                'id',
+                $request->user_id
+
+            )
+            ->where(
+                'contact_email',
+                $request->email
+            )
             ->first();
-    
+
         if (!$company) {
+
             return response()->json([
-                'status' => false,
+
+                'status'  => false,
+
                 'message' => 'Company not found'
+
             ], 404);
         }
-    
-        if ($company->otp != $request->otp) {
+
+        /*
+        |--------------------------------------------------------------------------
+        | CHECK OTP
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+            (string) $company->otp !==
+            (string) $request->otp
+        ) {
+
             return response()->json([
-                'status' => false,
+
+                'status'  => false,
+
                 'message' => 'Invalid OTP'
+
             ], 400);
         }
-    
-        // ✅ Mark email verified
-        $company->update([
-          //  'otp' => null,
-            'is_mail_verified' => 1
-        ]);
-    
-        // ✅ Call Zoho creation after verification
-        return $this->createContactFromCompany(
-            new Request([
-                'user_id'    => $request->user_id,
-                'company_id' => $request->company_id
-            ])
+
+        /*
+        |--------------------------------------------------------------------------
+        | DEFAULT UPDATE DATA
+        |--------------------------------------------------------------------------
+        */
+
+        $companyUpdateData = [
+
+            'is_mail_verified' => 1,
+
+            'otp' => null,
+        ];
+
+        /*
+        |--------------------------------------------------------------------------
+        | CHECK ORG USER
+        |--------------------------------------------------------------------------
+        */
+
+        $orguser = OrgUsersMaster::where(
+                'email',
+                $company->contact_email
+            )
+            ->first();
+
+        if ($orguser) {
+
+            /*
+            |--------------------------------------------------------------------------
+            | UPDATE ORG USER
+            |--------------------------------------------------------------------------
+            */
+
+            $orguser->update([
+
+                'is_mail_verified' => 1
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | IF ZOHO CONTACT EXISTS
+            |--------------------------------------------------------------------------
+            */
+
+            if (!empty($orguser->zoho_contact_id)) {
+
+                $companyUpdateData['zoho_id'] =
+                    $orguser->zoho_contact_id;
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | UPDATE COMPANY
+        |--------------------------------------------------------------------------
+        */
+
+        $company->update(
+            $companyUpdateData
         );
+
+        $company->refresh();
+
+        /*
+        |--------------------------------------------------------------------------
+        | CREATE ZOHO CONTACT
+        |--------------------------------------------------------------------------
+        | CONDITION:
+        | IF org_code IS NULL
+        |--------------------------------------------------------------------------
+        */
+
+        if (
+         
+            empty($company->zoho_id)
+        ) {
+
+            try {
+
+                /*
+                |--------------------------------------------------------------------------
+                | DEFAULT COMPANY ID = 1
+                |--------------------------------------------------------------------------
+                */
+
+                $defaultCompanyId = 1;
+
+                $zohoRequest = new Request([
+
+                    'user_id'    => $company->id,
+
+                    'company_id' => $defaultCompanyId,
+
+                    'role'       => $company->role
+                ]);
+
+                /*
+                |--------------------------------------------------------------------------
+                | CALL CREATE CONTACT METHOD
+                |--------------------------------------------------------------------------
+                */
+
+                $zohoResponse =
+                    $this->createContactFromCompany(
+                        $zohoRequest
+                    );
+
+                $zohoData =
+                    json_decode(
+                        $zohoResponse->getContent(),
+                        true
+                    );
+
+                /*
+                |--------------------------------------------------------------------------
+                | REFRESH COMPANY AGAIN
+                |--------------------------------------------------------------------------
+                */
+
+                $company->refresh();
+
+                \Log::info(
+
+                    'ZOHO CONTACT AUTO CREATED AFTER EMAIL VERIFY',
+
+                    [
+
+                        'company_id' =>
+                            $company->id,
+
+                        'zoho_id' =>
+                            $company->zoho_id,
+
+                        'response' =>
+                            $zohoData
+                    ]
+                );
+
+            } catch (\Throwable $e) {
+
+                \Log::error(
+
+                    'ZOHO AUTO CONTACT CREATE FAILED',
+
+                    [
+
+                        'company_id' =>
+                            $company->id,
+
+                        'message' =>
+                            $e->getMessage(),
+
+                        'line' =>
+                            $e->getLine(),
+
+                        'file' =>
+                            $e->getFile()
+                    ]
+                );
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | FINAL RESPONSE
+        |--------------------------------------------------------------------------
+        */
+
+        return response()->json([
+
+            'status'     => true,
+
+            'role'       => $company->role,
+
+            'user_id'    => $company->id,
+
+            'company_id' => $company->id,
+
+            'zoho_id'    => $company->zoho_id,
+
+            'message'    => 'Email verified successfully'
+
+        ], 200);
+
+    } catch (\Throwable $e) {
+
+        \Log::error(
+
+            'VERIFY EMAIL OTP FAILED',
+
+            [
+
+                'message' =>
+                    $e->getMessage(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'trace' =>
+                    substr(
+                        $e->getTraceAsString(),
+                        0,
+                        3000
+                    )
+            ]
+        );
+
+        return response()->json([
+
+            'status'  => false,
+
+            'message' => $e->getMessage()
+
+        ], 500);
     }
-    public function createContactFromCompany(Request $request)
-    {
+}
+public function createContactFromCompany(Request $request)
+{
     $validator = Validator::make($request->all(), [
         'user_id'    => 'required|exists:companies,id',
         'company_id' => 'required|exists:companies,id',
+        'role'       => 'nullable'
     ]);
 
     if ($validator->fails()) {
@@ -709,9 +1793,9 @@ class WleadController extends Controller
         ], 422);
     }
 
-    /**
-     * 🔐 Zoho credential owner
-     */
+    // ==========================================
+    // Zoho credential owner
+    // ==========================================
     $zohoCompany = Company::find($request->company_id);
 
     if (
@@ -725,9 +1809,9 @@ class WleadController extends Controller
         ], 400);
     }
 
-    /**
-     * 🏢 Company whose contact will be created in Zoho
-     */
+    // ==========================================
+    // TARGET COMPANY
+    // ==========================================
     $company = Company::find($request->user_id);
 
     if (!$company) {
@@ -737,7 +1821,9 @@ class WleadController extends Controller
         ], 404);
     }
 
-    // 🚫 Prevent duplicate Zoho contact
+    // ==========================================
+    // PREVENT DUPLICATE
+    // ==========================================
     if ($company->zoho_id) {
         return response()->json([
             'status'  => false,
@@ -745,14 +1831,14 @@ class WleadController extends Controller
         ], 409);
     }
 
-    /**
-     * 🧱 Build Zoho payload
-     */
+    // ==========================================
+    // PAYLOAD
+    // ==========================================
     $payload = [
-        "contact_name"    => $company->business_name,
-        "company_name"    => $company->trade_name ?? $company->business_name,
-        "has_transaction" => true,
-        "contact_type"    => "customer",
+        "contact_name"     => $company->business_name . ' ' . $company->company_code,
+        "company_name"     => $company->trade_name ?? $company->business_name,
+        "has_transaction"  => true,
+        "contact_type"     => $request->role != 5 ? 'vendor' : 'customer',
 
         "billing_address" => [
             "attention" => $company->contact_person,
@@ -799,10 +1885,41 @@ class WleadController extends Controller
         $body = json_decode($response->getBody(), true);
 
         if (!empty($body['contact']['contact_id'])) {
-            $company->update([
+
+            $updateData = [
                 'zoho_id' => $body['contact']['contact_id'],
                 'z_json'  => json_encode($body['contact']),
-            ]);
+            ];
+
+            // ==========================================
+            // ROLE 2 → COPY ZOHO CREDENTIALS
+            // ==========================================
+            if ($request->role == 2) {
+                $updateData = array_merge($updateData, [
+                    'zoho_access_token'  => $zohoCompany->zoho_access_token,
+                    'zoho_org_id'        => $zohoCompany->zoho_org_id,
+                    'zoho_client_id'     => $zohoCompany->zoho_client_id,
+                    'zoho_client_secret' => $zohoCompany->zoho_client_secret,
+                    'zoho_redirect_uri'  => $zohoCompany->zoho_redirect_uri,
+                    'zoho_refresh_token' => $zohoCompany->zoho_refresh_token,
+                ]);
+            }
+
+            $company->update($updateData);
+
+            // ==========================================
+            //  SYNC WITH ORG_USERS_MASTER
+            // ==========================================
+            $orgUser = OrgUsersMaster::where('email', $company->contact_email)
+                ->orWhere('phone', $company->contact_phone)
+                ->first();
+
+            if ($orgUser) {
+                $orgUser->update([
+                    'zoho_contact_id' => $company->zoho_id,
+                    'is_mail_verified'=> 1
+                ]);
+            }
         }
 
         return response()->json([
@@ -812,6 +1929,7 @@ class WleadController extends Controller
         ], 200);
 
     } catch (\GuzzleHttp\Exception\ClientException $e) {
+
         $errorBody = json_decode(
             $e->getResponse()->getBody()->getContents(),
             true

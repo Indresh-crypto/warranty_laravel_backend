@@ -3,7 +3,7 @@
 
 <head>
 <meta charset="UTF-8">
-<title>Extended Warranty Certificate</title>
+<title>Warranty Certificate</title>
 
 <style>
 
@@ -102,7 +102,7 @@ body{
 </div>
 
 <div class="title">
-Extended Warranty Certificate
+Warranty Certificate
 </div>
 
 
@@ -146,7 +146,7 @@ Ph: {{ $device->customer->mobile }}
 
 <tr>
 <td class="label">Warranty Type</td>
-<td class="value">Extended Warranty</td>
+<td class="value">{{ $device->product->product_type }}</td>
 </tr>
 
 <tr>
@@ -249,7 +249,7 @@ Ph. {{ $retailer->contact_phone }},
 
 @php
 $coverages = $device->product->coverages;
-$chunks = $coverages->chunk(3);
+$chunks = $coverages->chunk(2);
 @endphp
 
 @foreach($chunks as $chunk)
@@ -257,15 +257,11 @@ $chunks = $coverages->chunk(3);
 <tr>
 
 @foreach($chunk as $c)
-
 <td>• {{ $c->title }}</td>
-
 @endforeach
 
-@for($i=$chunk->count(); $i<3; $i++)
-
+@for($i=$chunk->count(); $i<2; $i++)
 <td></td>
-
 @endfor
 
 </tr>
@@ -284,15 +280,19 @@ $chunks = $coverages->chunk(3);
 
 <!-- FOOTER -->
 <div class="footer">
-
-<strong>GoElectronix Technologies Pvt. Ltd.</strong><br>
+<strong>Owned & Administered by</strong><br>
+<strong style="font-size:12px;">GoElectronix Technologies Pvt. Ltd.</strong><br>
 
 Corporate Office: Unit No. 403, 4th Floor, Ellora Olearise Plot No. A-786,
 TTC Industrial Area MIDC, Kopar Khairane, Navi Mumbai, Maharashtra – 400709, India
 
 <br>
 
-Email: hello@goelectronix.com
+Email: hello@goelectronix.com | 
+Phone: +918828272570
+<br>
+For detailed Terms & Conditions visit:
+🌐 www.goelectronix.com
 
 </div>
 

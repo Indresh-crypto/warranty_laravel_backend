@@ -17,6 +17,9 @@ use Carbon\Carbon;
 use App\Events\CustomerRegistered;
 use App\Mail\WarrantyCancelledMail;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+
 
 class WCustomerController extends Controller
 {
@@ -143,11 +146,11 @@ class WCustomerController extends Controller
         $validator = Validator::make($request->all(), [
             'name'        => 'required|string|max:255',
             'mobile'      => 'required|digits:10',
-            'email'       => 'required|email',
-            'state'       => 'required|string',
-            'city'        => 'required|string',
-            'pincode'     => 'required|string',
-            'location'    => 'required|string',
+            'email'       => 'nullable|email',
+            'state'       => 'nullable|string',
+            'city'        => 'nullable|string',
+            'pincode'     => 'nullable|string',
+            'location'    => 'nullable|string',
             'retailer_id' => 'nullable|integer',
             'company_id'  => 'nullable|integer',
             'agent_id'    => 'nullable|integer',
@@ -165,15 +168,15 @@ class WCustomerController extends Controller
     
         return DB::transaction(function () use ($request) {
     
-            // 🔍 Check existing customer
+            //  Check existing customer
             $customer = WCustomer::where('mobile', $request->mobile)
                 ->orWhere('email', $request->email)
                 ->first();
     
-            // 🆕 If customer does NOT exist
+            //  If customer does NOT exist
             if (!$customer) {
     
-                // ✅ Step 1: Create customer
+                // Step 1: Create customer
                 $customer = WCustomer::create([
                     'name'        => $request->name,
                     'mobile'      => $request->mobile,
@@ -190,11 +193,11 @@ class WCustomerController extends Controller
                     'created_by'  => $request->created_by
                 ]);
     
-                // ✅ Step 2: Generate c_code using primary key
+                // Step 2: Generate c_code using primary key
                 $random = strtoupper(\Illuminate\Support\Str::random(6));
                 $cCode = "CST-{$customer->id}-{$random}";
     
-                // ✅ Step 3: Update customer with c_code
+                // Step 3: Update customer with c_code
                 $customer->update([
                     'c_code' => $cCode
                 ]);
@@ -250,168 +253,167 @@ class WCustomerController extends Controller
     }
 
     
-  public function updateWarrantyStatus(Request $request, $id)
-  {
-    $validator = Validator::make($request->all(), [
-        'is_approved'   => 'required|integer|in:1,2',
-        'reject_remark' => 'nullable|string|max:500',
-        'note'          => 'required|string',
-        'reason'        => 'nullable|string', // credit note reason
-    ]);
-
-    if ($validator->fails()) {
-        return response()->json([
-            'success' => false,
-            'errors'  => $validator->errors(),
-        ], 422);
-    }
-
-    $device = WDevice::findOrFail($id);
-    $data   = $validator->validated();
-
-    /**
-     * 🔹 Handle rejection
-     */
-    if ($data['is_approved'] == 2) {
-
-        // Set reject date
-        $data['reject_date'] = Carbon::now();
-
-        // 🚫 Credit note already issued
-        if ($device->credit_note) {
+      public function updateWarrantyStatus(Request $request, $id)
+      {
+        $validator = Validator::make($request->all(), [
+            'is_approved'   => 'required|integer|in:1,2',
+            'reject_remark' => 'nullable|string|max:500',
+            'note'          => 'required|string',
+            'reason'        => 'nullable|string', // credit note reason
+        ]);
+    
+        if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Credit note already issued for this device',
-            ], 409);
+                'errors'  => $validator->errors(),
+            ], 422);
         }
-
-        // 🚫 Invoice missing
-        if (!$device->invoice_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No invoice found for this device',
-            ], 400);
-        }
-
+    
+        $device = WDevice::findOrFail($id);
+        $data   = $validator->validated();
+    
         /**
-         * 🔐 Company (Zoho org)
+         * 🔹 Handle rejection
          */
-        $company = Company::where('id', $device->company_id)
-            ->where('role', 2)
-            ->first();
-
-        if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Zoho credentials not found',
-            ], 400);
-        }
-
-        /**
-         * 🏪 Retailer (Zoho customer)
-         */
-        $retailer = Company::find($device->retailer_id);
-
-        if (!$retailer || !$retailer->zoho_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Retailer Zoho contact not found',
-            ], 400);
-        }
-
-        /**
-         * 🧾 Credit note payload
-         */
-        $payload = [
-            'customer_id' => $retailer->zoho_id,
-            'invoice_id'  => $device->invoice_id,
-            'date'        => now()->format('Y-m-d'),
-            'line_items'  => [
-                [
-                    'name'        => $device->product_name ?? 'Warranty Cancellation',
-                    'description' => "Warranty cancelled for device ID {$device->id}",
-                    'rate'        => $device->product_price,
-                    'quantity'    => 1,
-                ],
-            ],
-            'notes'  => $request->reason ?? 'Warranty cancelled',
-            'status' => 4, // approved
-        ];
-
-        $client = new Client(['timeout' => 60]);
-
-        try {
-            $response = $client->post(
-                'https://www.zohoapis.in/books/v3/creditnotes',
-                [
-                    'headers' => [
-                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
-                        'Content-Type'  => 'application/json',
-                    ],
-                    'query' => [
-                        'organization_id' => $company->zoho_org_id,
-                    ],
-                    'json' => $payload,
-                ]
-            );
-
-            $body = json_decode($response->getBody(), true);
-
-            if (empty($body['creditnote']['creditnote_id'])) {
+        if ($data['is_approved'] == 2) {
+    
+            // Set reject date
+            $data['reject_date'] = Carbon::now();
+    
+            // 🚫 Credit note already issued
+            if ($device->credit_note) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Credit note creation failed',
-                ], 500);
+                    'message' => 'Credit note already issued for this device',
+                ], 409);
             }
-
-            // ✅ Save credit note info
-            $data['credit_note']    = $body['creditnote']['creditnote_id'];
-            $data['cd_issued_date'] = now();
-            $data['status_remark']  = 'Warranty cancelled';
-            
-            Log::info('CANCEL MAIL DEBUG – CUSTOMER CHECK', [
-                'device_id' => $device->id,
-                'w_customer_id' => $device->w_customer_id,
-                'customer_exists' => $device->customer ? true : false,
-                'customer_email' => optional($device->customer)->email,
-            ]);
-
-            Mail::to($device->customer->email)
-                ->queue(new WarrantyCancelledMail(
-                    $device->fresh(['customer','product.coverages']),
-                    $request->reason
-            ));
     
-        } catch (\GuzzleHttp\Exception\ClientException $e) {
-            $errorBody = json_decode(
-                $e->getResponse()->getBody()->getContents(),
-                true
-            );
-
-            return response()->json([
-                'success' => false,
-                'error'   => $errorBody['message'] ?? $e->getMessage(),
-            ], $e->getResponse()->getStatusCode());
+            // 🚫 Invoice missing
+            if (!$device->invoice_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No invoice found for this device',
+                ], 400);
+            }
+    
+            /**
+             * 🔐 Company (Zoho org)
+             */
+            $company = Company::where('id',1)
+                ->first();
+    
+            if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Zoho credentials not found',
+                ], 400);
+            }
+    
+            /**
+             * 🏪 Retailer (Zoho customer)
+             */
+            $retailer = Company::find($device->retailer_id);
+    
+            if (!$retailer || !$retailer->zoho_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Retailer Zoho contact not found',
+                ], 400);
+            }
+    
+            /**
+             * 🧾 Credit note payload
+             */
+            $payload = [
+                'customer_id' => $retailer->zoho_id,
+                'invoice_id'  => $device->invoice_id,
+                'date'        => now()->format('Y-m-d'),
+                'line_items'  => [
+                    [
+                        'name'        => $device->product_name ?? 'Warranty Cancellation',
+                        'description' => "Warranty cancelled for device ID {$device->id}",
+                        'rate'        => $device->product_price,
+                        'quantity'    => 1,
+                    ],
+                ],
+                'notes'  => $request->reason ?? 'Warranty cancelled',
+                'status' => 4, // approved
+            ];
+    
+            $client = new Client(['timeout' => 60]);
+    
+            try {
+                $response = $client->post(
+                    'https://www.zohoapis.in/books/v3/creditnotes',
+                    [
+                        'headers' => [
+                            'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                            'Content-Type'  => 'application/json',
+                        ],
+                        'query' => [
+                            'organization_id' => $company->zoho_org_id,
+                        ],
+                        'json' => $payload,
+                    ]
+                );
+    
+                $body = json_decode($response->getBody(), true);
+    
+                if (empty($body['creditnote']['creditnote_id'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Credit note creation failed',
+                    ], 500);
+                }
+    
+                // ✅ Save credit note info
+                $data['credit_note']    = $body['creditnote']['creditnote_id'];
+                $data['cd_issued_date'] = now();
+                $data['status_remark']  = 'Warranty cancelled';
+                
+                Log::info('CANCEL MAIL DEBUG – CUSTOMER CHECK', [
+                    'device_id' => $device->id,
+                    'w_customer_id' => $device->w_customer_id,
+                    'customer_exists' => $device->customer ? true : false,
+                    'customer_email' => optional($device->customer)->email,
+                ]);
+    
+                Mail::to($device->customer->email)
+                    ->queue(new WarrantyCancelledMail(
+                        $device->fresh(['customer','product.coverages']),
+                        $request->reason
+                ));
+        
+            } catch (\GuzzleHttp\Exception\ClientException $e) {
+                $errorBody = json_decode(
+                    $e->getResponse()->getBody()->getContents(),
+                    true
+                );
+    
+                return response()->json([
+                    'success' => false,
+                    'error'   => $errorBody['message'] ?? $e->getMessage(),
+                ], $e->getResponse()->getStatusCode());
+            }
+        } 
+        /**
+         * 🔹 Approved flow
+         */
+        else {
+            $data['reject_date'] = null;
         }
-    } 
-    /**
-     * 🔹 Approved flow
-     */
-    else {
-        $data['reject_date'] = null;
+    
+        /**
+         * ✅ Update device
+         */
+        $device->update($data);
+    
+        return response()->json([
+            'success' => true,
+            'message' => 'Warranty status updated successfully',
+            'data'    => $device,
+        ], 200);
     }
-
-    /**
-     * ✅ Update device
-     */
-    $device->update($data);
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Warranty status updated successfully',
-        'data'    => $device,
-    ], 200);
-}
     
     public function deviceAnalytics(Request $request)
     {
@@ -427,9 +429,14 @@ class WCustomerController extends Controller
             $query->where('retailer_id', $request->retailer_id);
         }
     
-        if ($request->filled('company_id')) {
+        if ($request->filled('promoter_id')) {
             // company_id maps to promoter_id
-            $query->where('promoter_id', $request->company_id);
+            $query->where('promoter_id', $request->promoter_id);
+        }
+    
+     if ($request->filled('company_id')) {
+            // company_id maps to promoter_id
+            $query->where('company_id', $request->company_id);
         }
     
         /* ================= AGGREGATES ================= */
@@ -461,7 +468,8 @@ class WCustomerController extends Controller
     {
     $query = WDevice::with([
         'customer',
-        'customer.retailer'
+        'retailer',
+        'product:id,product_type'
     ]);
 
     /* ================= GLOBAL SEARCH ================= */
@@ -517,10 +525,18 @@ class WCustomerController extends Controller
         $query->where('w_customer_id', $request->customer_id);
     }
     
+     if ($request->filled('promoter_id')) {
+        $query->where('promoter_id', $request->promoter_id);
+    }
+
+    
      if ($request->filled('company_id')) {
         $query->where('company_id', $request->company_id);
     }
 
+    if ($request->filled('subscription_id')) {
+        $query->where('subscription_id', $request->subscription_id);
+    }
     /* ================= INVOICE STATUS ================= */
     if ($request->filled('invoice_status')) {
         $status = strtolower(trim($request->invoice_status));
@@ -582,260 +598,392 @@ class WCustomerController extends Controller
     );
 }
 
-public function sendCustomerEmailOtp(Request $request)
-{
-    $request->validate([
-        'email' => 'required|email'
-    ]);
-
-    $customer = WCustomer::where('email', $request->email)->first();
-
-    if (!$customer) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Customer not found'
-        ], 404);
-    }
-
-    // 🔐 Generate 6-digit OTP
-    $otp = random_int(100000, 999999);
-
-    // ⏳ OTP expiry (5 minutes)
-    $customer->update([
-        'otp' => $otp,
-        'otp_expires_at' => Carbon::now()->addMinutes(5),
-        'is_email_verified' => 0
-    ]);
-
-    // 📧 Send email
-    Mail::send('emails.customer_otp', [
-        'name' => $customer->name,
-        'otp'  => $otp
-    ], function ($mail) use ($customer) {
-        $mail->to($customer->email)
-             ->subject('Your Login OTP');
-    });
-
-    return response()->json([
-        'status' => true,
-        'message' => 'OTP sent to email successfully'
-    ], 200);
-}
-
-public function verifyCustomerEmailOtp(Request $request)
-{
-    $request->validate([
-        'email' => 'required|email',
-        'otp'   => 'required|digits:6'
-    ]);
-
-    $customer = WCustomer::where('email', $request->email)->first();
-
-    if (!$customer) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Customer not found'
-        ], 404);
-    }
-
-    if (
-        $customer->otp !== $request->otp ||
-        Carbon::now()->greaterThan($customer->otp_expires_at)
-    ) {
-        return response()->json([
-            'status' => false,
-            'message' => 'Invalid or expired OTP'
-        ], 400);
-    }
-
-    // ✅ OTP verified
-    $customer->update([
-        'otp' => null,
-        'otp_expires_at' => null,
-        'is_email_verified' => 1
-    ]);
-
-    return response()->json([
-        'status' => true,
-        'message' => 'Login successful',
-        'role'=>7,
-        'data' => $customer->load([
-            'addresses',
-            'devices',
-            'retailer'
-        ])
-    ], 200);
-}
-
-public function payouts(Request $request)
-{
-    $validator = Validator::make($request->all(), [
-        'company_id'  => 'nullable|integer|exists:companies,id',
-        'retailer_id' => 'nullable|integer|exists:companies,id',
-        'agent_id'    => 'nullable|integer|exists:companies,id',
-    ]);
-
-    if ($validator->fails()) {
-        return response()->json([
-            'status' => false,
-            'errors' => $validator->errors()
-        ], 422);
-    }
-
-    $query = WDevice::query();
-
-    /* ================= FILTERS ================= */
-    $query->when($request->filled('company_id'), fn ($q) =>
-        $q->where('company_id', $request->company_id)
-    );
-
-    $query->when($request->filled('retailer_id'), fn ($q) =>
-        $q->where('retailer_id', $request->retailer_id)
-    );
-
-    $query->when($request->filled('agent_id'), fn ($q) =>
-        $q->where('agent_id', $request->agent_id)
-    );
-
-    /* ================= PAYOUT COLUMN ================= */
-    $earningColumn = $request->filled('agent_id')
-        ? 'other_payout'
-        : 'retailer_payout';
-
-    /* ================= AGGREGATES ================= */
-   $summary = $query->selectRaw("
-    COUNT(*) AS warranty_submitted,
-
-    COALESCE(SUM(product_price), 0) AS total_sales,
-
-    COALESCE(
-        SUM(CASE 
-            WHEN invoice_status = 'paid' 
-            THEN product_price 
-            ELSE 0 
-        END), 0
-    ) AS total_sales_invoice_paid,
-
-    COALESCE(
-        SUM(CASE 
-            WHEN invoice_status IS NOT NULL 
-             AND invoice_status != '' 
-            THEN product_price
-            ELSE 0
-        END), 0
-    ) AS total_sales_invoiced,
-
-    COALESCE(
-        SUM(CASE 
-            WHEN invoice_status IS NULL 
-              OR invoice_status = '' 
-            THEN product_price
-            ELSE 0
-        END), 0
-    ) AS total_sales_uninvoiced,
-
- COALESCE(
-        SUM(CASE 
-            WHEN invoice_status IS NULL 
-              OR invoice_status = '' 
-            THEN product_price
-            ELSE 0
-        END), 0
-    ) AS payable_amount,
-   
-    COALESCE(
-        SUM(CASE 
-            WHEN invoice_id IS NULL 
-              OR invoice_id = '' 
-            THEN product_price 
-            ELSE 0 
-        END), 0
-    ) AS pending_invoice_amount,
-
-    COALESCE(
-        SUM(CASE 
-            WHEN invoice_id IS NULL 
-              OR invoice_id = '' 
-            THEN 1 
-            ELSE 0 
-        END), 0
-    ) AS pending_invoice_count,
-
-    COALESCE(
-        SUM(CASE 
-            WHEN credit_note IS NOT NULL 
-            THEN product_price 
-            ELSE 0 
-        END), 0
-    ) AS credit_note_amount,
+    public function sendCustomerEmailOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email'
+        ]);
     
-       COALESCE(
+        $customer = WCustomer::where('email', $request->email)->first();
+    
+        if (!$customer) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Customer not found'
+            ], 404);
+        }
+    
+        // 🔐 Generate 6-digit OTP
+        $otp = random_int(100000, 999999);
+    
+        // ⏳ OTP expiry (5 minutes)
+        $customer->update([
+            'otp' => $otp,
+            'otp_expires_at' => Carbon::now()->addMinutes(5),
+            'is_email_verified' => 0
+        ]);
+    
+        // 📧 Send email
+        Mail::send('emails.customer_otp', [
+            'name' => $customer->name,
+            'otp'  => $otp
+        ], function ($mail) use ($customer) {
+            $mail->to($customer->email)
+                 ->subject('Your Login OTP');
+        });
+    
+        return response()->json([
+            'status' => true,
+            'message' => 'OTP sent to email successfully'
+        ], 200);
+    }
+
+    public function verifyCustomerEmailOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'otp'   => 'required|digits:6'
+        ]);
+    
+        $customer = WCustomer::where('email', $request->email)->first();
+    
+        if (!$customer) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Customer not found'
+            ], 404);
+        }
+    
+        if (
+            $customer->otp !== $request->otp ||
+            Carbon::now()->greaterThan($customer->otp_expires_at)
+        ) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid or expired OTP'
+            ], 400);
+        }
+    
+        // ✅ OTP verified
+        $customer->update([
+            'otp' => null,
+            'otp_expires_at' => null,
+            'is_email_verified' => 1
+        ]);
+    
+        return response()->json([
+            'status' => true,
+            'message' => 'Login successful',
+            'role'=>7,
+            'data' => $customer->load([
+                'addresses',
+                'devices',
+                'retailer'
+            ])
+        ], 200);
+    }
+
+    public function payouts(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'company_id'  => 'nullable|integer|exists:companies,id',
+            'retailer_id' => 'nullable|integer|exists:companies,id',
+            'agent_id'    => 'nullable|integer|exists:companies,id',
+            'promoter_id'  => 'nullable|integer|exists:companies,id',
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+    
+        $query = WDevice::query();
+    
+        /* ================= FILTERS ================= */
+        $query->when($request->filled('company_id'), fn ($q) =>
+            $q->where('company_id', $request->company_id)
+        );
+    
+        $query->when($request->filled('retailer_id'), fn ($q) =>
+            $q->where('retailer_id', $request->retailer_id)
+        );
+    
+        $query->when($request->filled('agent_id'), fn ($q) =>
+            $q->where('agent_id', $request->agent_id)
+        );
+    
+      $query->when($request->filled('promoter_id'), fn ($q) =>
+            $q->where('promoter_id', $request->promoter_id)
+        );
+        
+        /* ================= PAYOUT COLUMN ================= */
+       $earningColumn = 0;
+       if ($request->filled('agent_id')) {
+                $earningColumn = 'other_payout';
+            } elseif ($request->filled('promoter_id')) {
+                $earningColumn = 'employee_payout';
+            } else {
+                $earningColumn = 'retailer_payout';
+            }
+    
+    
+        /* ================= AGGREGATES ================= */
+       $summary = $query->selectRaw("
+        COUNT(*) AS warranty_submitted,
+    
+        COALESCE(SUM(product_price), 0) AS total_sales,
+    
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_status = 'paid' 
+                THEN product_price 
+                ELSE 0 
+            END), 0
+        ) AS total_sales_invoice_paid,
+    
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_status IS NOT NULL 
+                 AND invoice_status != '' 
+                THEN product_price
+                ELSE 0
+            END), 0
+        ) AS total_sales_invoiced,
+    
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_status IS NULL 
+                  OR invoice_status = '' 
+                THEN product_price
+                ELSE 0
+            END), 0
+        ) AS total_sales_uninvoiced,
+    
+     COALESCE(
+            SUM(CASE 
+                WHEN invoice_status IS NULL 
+                  OR invoice_status = '' 
+                THEN product_price
+                ELSE 0
+            END), 0
+        ) AS payable_amount,
+       
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_id IS NULL 
+                  OR invoice_id = '' 
+                THEN product_price 
+                ELSE 0 
+            END), 0
+        ) AS pending_invoice_amount,
+    
+        COALESCE(
+            SUM(CASE 
+                WHEN invoice_id IS NULL 
+                  OR invoice_id = '' 
+                THEN 1 
+                ELSE 0 
+            END), 0
+        ) AS pending_invoice_count,
+    
+        COALESCE(
+            SUM(CASE 
+                WHEN credit_note IS NOT NULL 
+                THEN product_price 
+                ELSE 0 
+            END), 0
+        ) AS credit_note_amount,
+        
+           COALESCE(
+            SUM(
+                CASE 
+                    WHEN invoice_status = 'paid'
+                    THEN product_price
+                    ELSE 0
+                END
+            ), 0
+        ) AS paid_amount,
+    
+    COALESCE(
         SUM(
             CASE 
                 WHEN invoice_status = 'paid'
-                THEN product_price
-                ELSE 0
-            END
-        ), 0
-    ) AS paid_amount,
-
-COALESCE(
-    SUM(
-        CASE 
-            WHEN invoice_status = 'paid'
-            THEN 1
-            ELSE 0
-        END
-    ), 0
-) AS paid_count,
-
-    COALESCE(
-        SUM(
-            CASE 
-                WHEN credit_note IS NOT NULL 
                 THEN 1
                 ELSE 0
             END
         ), 0
-    ) AS credit_note_count,
+    ) AS paid_count,
+    
+        COALESCE(
+            SUM(
+                CASE 
+                    WHEN credit_note IS NOT NULL 
+                    THEN 1
+                    ELSE 0
+                END
+            ), 0
+        ) AS credit_note_count,
+    
+        COALESCE(
+            SUM(
+                CASE 
+                    WHEN invoice_id IS NOT NULL 
+                     AND invoice_id != ''
+                    THEN 1
+                    ELSE 0
+                END
+            ), 0
+        ) AS total_invoice_count,
+            COALESCE(SUM($earningColumn), 0) AS my_earnings
+        ")->first();
+    
+        /* ================= RESPONSE ================= */
+        return response()->json([
+            'status' => true,
+            'data' => [
+                'total_sales'              => (float) $summary->total_sales,
+                'warranty_submitted'       => (int) $summary->warranty_submitted,
+    
+                'total_sales_invoice_paid'=> (float) $summary->total_sales_invoice_paid,
+                'total_sales_invoiced'    => (float) $summary->total_sales_invoiced,
+                'total_sales_uninvoiced'  => (float) $summary->total_sales_uninvoiced,
+    
+                'pending_invoices' => [
+                    'count'  => (int) $summary->pending_invoice_count,
+                    'amount' => (float) $summary->pending_invoice_amount,
+                ],
+    
+                'credit_notes'   => (float) $summary->credit_note_amount,
+                'payable_amount' => (float) $summary->payable_amount,
+                'my_earnings'    => (float) $summary->my_earnings,
+                'paid_amount'    => (float) $summary->paid_amount,
+                'credit_note_count'    => (float) $summary->credit_note_count,
+                'total_invoice_count'       =>    (int) $summary->total_invoice_count
+            ]
+        ], 200);
+    }
+    
+    public function sendCustomerWaOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'mobile'     => 'required|digits:10',
+            'company_id'        => 'required|integer',
+        ]);
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => $validator->errors()->first(),
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        $customer = WCustomer::where('mobile', $request->mobile)
+          //  ->where('company_id', $request->company_id)
+            ->first();    
+            
+        if (!$customer) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Customer not found.'
+            ], 404);
+        }
+    
+        $newPhone = $request->mobile;
 
-COALESCE(
-    SUM(
-        CASE 
-            WHEN invoice_id IS NOT NULL 
-             AND invoice_id != ''
-            THEN 1
-            ELSE 0
-        END
-    ), 0
-) AS total_invoice_count,
-    COALESCE(SUM($earningColumn), 0) AS my_earnings
-")->first();
+      
+        $otp = rand(100000, 999999);
+    
+        Cache::put("otp_{$newPhone}", $otp, now()->addMinutes(5));
+    
+        $destination = '91' . $newPhone;
+    
+        /*
+        |--------------------------------------------------------------------------
+        | SEND WHATSAPP OTP
+        |--------------------------------------------------------------------------
+        */
+    
+        $apiKey  = config('services.gupshup.key');
+        $source  = '919372011028';
+        $appName = 'Goelectronix';
+    
+        $template = json_encode([
+            'id'     => '660d8484-af82-4b82-9d3a-6cdab7b1b9da',
+            'params' => [$otp],
+        ]);
+    
+        $response = Http::asForm()
+            ->withHeaders(['apikey' => $apiKey])
+            ->post('https://api.gupshup.io/wa/api/v1/template/msg', [
+                'channel'     => 'whatsapp',
+                'source'      => $source,
+                'destination' => $destination,
+                'src.name'    => $appName,
+                'template'    => $template,
+            ]);
+    
+        if ($response->successful()) {
+            return response()->json([
+                'success' => true,
+                'message' => 'OTP sent successfully.',
+                'otp' => $otp 
+            ]);
+        }
+    
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to send OTP.',
+            'error' => $response->json(),
+        ], 500);
+    }
 
-    /* ================= RESPONSE ================= */
+   public function verifyCustomerOtp(Request $request)
+    {
+    $validator = Validator::make($request->all(), [
+        'mobile' => 'required|digits:10',
+        'otp'           => 'required|digits:6'
+    ]);
+
+    if ($validator->fails()) {
+        return response()->json([
+            'success' => false,
+            'message' => $validator->errors()->first(),
+            'errors'  => $validator->errors()
+        ], 422);
+    }
+
+    $cachedOtp = Cache::get("otp_{$request->mobile}");
+
+    if ($cachedOtp && $cachedOtp == $request->otp) {
+
+        Cache::forget("otp_{$request->mobile}");
+
+        // Update company
+        WCustomer::where('mobile', $request->mobile)
+            ->update(['is_wa_verified' => 1]);
+
+        // Update master
+        WCustomer::where('mobile', $request->mobile)
+            ->update([
+                'is_wa_verified' => 1
+            ]);
+
+        $user = WCustomer::where('mobile', $request->mobile)->first();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'OTP verified successfully',
+            'data'    => $user
+        ]);
+    }
+
     return response()->json([
-        'status' => true,
-        'data' => [
-            'total_sales'              => (float) $summary->total_sales,
-            'warranty_submitted'       => (int) $summary->warranty_submitted,
-
-            'total_sales_invoice_paid'=> (float) $summary->total_sales_invoice_paid,
-            'total_sales_invoiced'    => (float) $summary->total_sales_invoiced,
-            'total_sales_uninvoiced'  => (float) $summary->total_sales_uninvoiced,
-
-            'pending_invoices' => [
-                'count'  => (int) $summary->pending_invoice_count,
-                'amount' => (float) $summary->pending_invoice_amount,
-            ],
-
-            'credit_notes'   => (float) $summary->credit_note_amount,
-            'payable_amount' => (float) $summary->payable_amount,
-            'my_earnings'    => (float) $summary->my_earnings,
-            'paid_amount'    => (float) $summary->paid_amount,
-            'credit_note_count'    => (float) $summary->credit_note_count,
-            'total_invoice_count'       =>    (int) $summary->total_invoice_count
-        ]
-    ], 200);
+        'success' => false,
+        'message' => 'Invalid or expired OTP',
+    ], 401);
 }
 
 

@@ -93,57 +93,177 @@ class ZohoPaymentController extends Controller
     }
 
     public function getPayments(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'org_id' => 'nullable',
-            'payment_id' => 'nullable|string',
-            'contact_id' => 'nullable|string',
-            'per_page' => 'nullable|integer|min:1|max:100',
-            'page' => 'nullable|integer|min:1'
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json(['errors' => $validator->errors()], 422);
-        }
-    
-        $perPage = $request->get('per_page', 10);
-    
-        $query = ZohoPayment::query();
-    
-        // Fixed filters (optional)
-        if ($request->org_id) {
-            $query->where('org_id', $request->org_id);
-        }
-    
-        if ($request->payment_id) {
-            $query->where('payment_id', 'like', "%{$request->payment_id}%");
-        }
-    
-        if ($request->contact_id) {
-            $query->where('contact_id', 'like', "%{$request->contact_id}%");
-        }
-    
-        // Dynamic filter (loop through fillable fields)
-        $searchableFields = (new ZohoPayment())->getFillable();
-    
-        foreach ($request->all() as $key => $value) {
-            if (in_array($key, $searchableFields) && !empty($value)) {
-                $query->where($key, 'like', "%{$value}%");
-            }
-        }
-    
-        // Pagination
-        $paginated = $query->paginate($perPage);
-    
-        $paginated->getCollection()->transform(function ($item) {
-            $item->z_json = json_decode($item->z_json); // decode JSON payload
-            return $item;
-        });
-    
-        return response()->json($paginated);
+{
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATION
+    |--------------------------------------------------------------------------
+    */
+    $validator = Validator::make($request->all(), [
+
+        'org_id'        => 'nullable|string',
+
+        'location_id'   => 'nullable|string',
+
+        'payment_id'    => 'nullable|string',
+
+        'customer_id'   => 'nullable|string',
+
+        'invoice_id'    => 'nullable|string',
+
+        'payment_mode'  => 'nullable|string',
+
+        'per_page'      => 'nullable|integer|min:1|max:100',
+
+        'page'          => 'nullable|integer|min:1',
+
+        /*
+            flags:
+            received_today
+            pending
+            failed
+        */
+        'flag'          => 'nullable|string|in:received_today,pending,failed',
+    ]);
+
+    if ($validator->fails()) {
+
+        return response()->json([
+
+            'status' => false,
+
+            'errors' => $validator->errors()
+
+        ], 422);
     }
 
-    
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | DEFAULT PARAMS
+        |--------------------------------------------------------------------------
+        */
+        $params = array_merge(
+
+            $request->all()
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | SYNC LATEST PAYMENTS IF LOCATION PROVIDED
+        |--------------------------------------------------------------------------
+        */
+        if ($request->filled('location_id')) {
+
+            \Log::info('PAYMENT FETCH REQUEST', $request->input());
+
+            try {
+
+                Http::timeout(60)
+
+                    ->acceptJson()
+
+                    ->get(
+
+                        'https://goelectronix.in/api/v1/zoho/sync-payments',
+
+                        [
+
+                            'org_id'      => $params['org_id'] ?? null,
+
+                            'location_id' => $request->location_id,
+                        ]
+                    );
+
+            } catch (\Throwable $syncError) {
+
+                \Log::error('PAYMENT SYNC FAILED', [
+
+                    'message' =>
+                        $syncError->getMessage(),
+
+                    'line' =>
+                        $syncError->getLine(),
+
+                    'file' =>
+                        $syncError->getFile(),
+                ]);
+            }
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | FETCH PAYMENTS
+        |--------------------------------------------------------------------------
+        */
+        $response = Http::timeout(30)
+
+            ->acceptJson()
+
+            ->get(
+
+                'https://goelectronix.in/api/v1/zoho/get-payments',
+
+                $params
+            );
+
+        /*
+        |--------------------------------------------------------------------------
+        | API FAILURE
+        |--------------------------------------------------------------------------
+        */
+        if (!$response->successful()) {
+
+            return response()->json([
+
+                'status' => false,
+
+                'message' =>
+                    'Unable to fetch payments',
+
+                'error' => $response->json()
+
+            ], $response->status());
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | RETURN SAME RESPONSE
+        |--------------------------------------------------------------------------
+        */
+        return response()->json(
+
+            $response->json(),
+
+            $response->status()
+        );
+
+    } catch (\Throwable $e) {
+
+        \Log::error('MASTER PAYMENT API FAILED', [
+
+            'message' => $e->getMessage(),
+
+            'line'    => $e->getLine(),
+
+            'file'    => $e->getFile(),
+        ]);
+
+        return response()->json([
+
+            'status' => false,
+
+            'message' =>
+                'Payment service unavailable',
+
+            'error' => $e->getMessage()
+
+        ], 500);
+    }
+}
+
+   /* 
     public function createOnlinePayment(Request $request)
     {
         Log::channel('payment')->info('Payment API called', [
@@ -192,9 +312,7 @@ class ZohoPaymentController extends Controller
         DB::beginTransaction();
     
         try {
-            /** =========================
-             * 1️⃣ CREATE PAYMENT RECORD
-             * ========================= */
+  
             $payment = OnlinePayment::create($data);
             DB::commit();
     
@@ -203,9 +321,7 @@ class ZohoPaymentController extends Controller
                 'razorpay_payment_id' => $data['payment_id']
             ]);
     
-            /** =========================
-             * 2️⃣ RAZORPAY STATUS CHECK
-             * ========================= */
+           
             $razorClient = new Client([
                 'auth' => [
                     config('services.razorpay.razorpay_key'),
@@ -236,118 +352,111 @@ class ZohoPaymentController extends Controller
                     'error' => $e->getMessage()
                 ]);
             }
-    
-            /** =========================
-             * 3️⃣ CAPTURE (ONLY IF NEEDED)
-             * ========================= */
-            if (!$isCaptured) {
-                try {
-                    Log::channel('payment')->info('Razorpay capture started', [
-                        'payment_id' => $data['payment_id']
-                    ]);
-    
-                    $captureResponse = $razorClient->post(
-                        "https://api.razorpay.com/v1/payments/{$data['payment_id']}/capture",
-                        [
-                            'json' => [
-                                'amount'   => $data['amount'] * 100,
-                                'currency' => 'INR',
-                            ]
-                        ]
-                    );
-    
-                    $razorpayResponseData = json_decode($captureResponse->getBody(), true);
-                    $isCaptured = ($razorpayResponseData['status'] ?? '') === 'captured';
-    
-                } catch (RequestException $e) {
-    
-                    $responseBody = optional($e->getResponse())->getBody()->getContents();
-    
-                    if (str_contains($responseBody, 'already been captured')) {
-                        Log::channel('payment')->warning(
-                            'Razorpay already captured – treating as success',
-                            ['payment_id' => $data['payment_id']]
-                        );
-                        $isCaptured = true;
-                    } else {
-                        Log::channel('payment')->error('Razorpay capture failed', [
-                            'error' => $e->getMessage(),
-                            'response' => $responseBody
-                        ]);
-                    }
-                }
-            }
-    
-            /** =========================
-             * 4️⃣ UPDATE CAPTURE STATUS
-             * ========================= */
-            $payment->update([
-                'is_captured'       => $isCaptured ? 1 : 0,
-                'capture_response' => $razorpayResponseData
-                    ? json_encode($razorpayResponseData)
-                    : null
-            ]);
-    
-            /** =========================
-             * 5️⃣ ZOHO PAYMENT
-             * ========================= */
-            if ($isCaptured && $data['company_id']) {
-    
-                $company = Company::find($data['company_id']);
-    
-                if ($company) {
+            if($request->w_type =="111")
+            {
+          
+                if (!$isCaptured) {
                     try {
-                        $zohoPayload = [
-                            "customer_id"       => $data['customer_id'],
-                            "payment_mode"      => "WARRANTY",
-                            "amount"            => $data['amount'],
-                            "date"              => date('Y-m-d', strtotime($data['payment_date'])),
-                            "reference_number"  => $data['payment_id'],
-                            "description"       => "Warranty Payment"
-                        ];
-    
-                        Log::channel('payment')->info('Zoho payment started', [
-                            'payload' => $zohoPayload
+                        Log::channel('payment')->info('Razorpay capture started', [
+                            'payment_id' => $data['payment_id']
                         ]);
-    
-                        $zohoClient = new Client();
-                        $zohoResponse = $zohoClient->post(
-                            "https://www.zohoapis.in/books/v3/customerpayments",
+        
+                        $captureResponse = $razorClient->post(
+                            "https://api.razorpay.com/v1/payments/{$data['payment_id']}/capture",
                             [
-                                'headers' => [
-                                    'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
-                                    'Content-Type'  => 'application/json',
-                                ],
-                                'query' => [
-                                    'organization_id' => $company->zoho_org_id
-                                ],
-                                'json' => $zohoPayload
+                                'json' => [
+                                    'amount'   => $data['amount'] * 100,
+                                    'currency' => 'INR',
+                                ]
                             ]
                         );
-    
-                        $zohoBody = json_decode($zohoResponse->getBody(), true);
-    
-                        $payment->update([
-                            'zoho_response' => json_encode($zohoBody),
-                            'zoho_status'   => isset($zohoBody['payment']) ? 1 : 0
-                        ]);
-    
-                        if (isset($zohoBody['payment'])) {
-                            event(new PaymentSuccessful($payment));
-                        }
-    
+        
+                        $razorpayResponseData = json_decode($captureResponse->getBody(), true);
+                        $isCaptured = ($razorpayResponseData['status'] ?? '') === 'captured';
+        
                     } catch (RequestException $e) {
-                        Log::channel('payment')->error('Zoho payment failed', [
-                            'error' => $e->getMessage(),
-                            'response' => optional($e->getResponse())->getBody()->getContents()
-                        ]);
+        
+                        $responseBody = optional($e->getResponse())->getBody()->getContents();
+        
+                        if (str_contains($responseBody, 'already been captured')) {
+                            Log::channel('payment')->warning(
+                                'Razorpay already captured – treating as success',
+                                ['payment_id' => $data['payment_id']]
+                            );
+                            $isCaptured = true;
+                        } else {
+                            Log::channel('payment')->error('Razorpay capture failed', [
+                                'error' => $e->getMessage(),
+                                'response' => $responseBody
+                            ]);
+                        }
+                    }
+                } 
+        
+                
+                $payment->update([
+                    'is_captured'       => $isCaptured ? 1 : 0,
+                    'capture_response' => $razorpayResponseData
+                        ? json_encode($razorpayResponseData)
+                        : null
+                ]);
+        
+              
+                if ($isCaptured && $data['company_id']) {
+        
+                    $company = Company::find($data['company_id']);
+        
+                    if ($company) {
+                        try {
+                            $zohoPayload = [
+                                "customer_id"       => $data['customer_id'],
+                                "payment_mode"      => "WARRANTY",
+                                "amount"            => $data['amount'],
+                                "date"              => date('Y-m-d', strtotime($data['payment_date'])),
+                                "reference_number"  => $data['payment_id'],
+                                "description"       => "Warranty Payment"
+                            ];
+        
+                            Log::channel('payment')->info('Zoho payment started', [
+                                'payload' => $zohoPayload
+                            ]);
+        
+                            $zohoClient = new Client();
+                            $zohoResponse = $zohoClient->post(
+                                "https://www.zohoapis.in/books/v3/customerpayments",
+                                [
+                                    'headers' => [
+                                        'Authorization' => 'Zoho-oauthtoken ' . $company->zoho_access_token,
+                                        'Content-Type'  => 'application/json',
+                                    ],
+                                    'query' => [
+                                        'organization_id' => $company->zoho_org_id
+                                    ],
+                                    'json' => $zohoPayload
+                                ]
+                            );
+        
+                            $zohoBody = json_decode($zohoResponse->getBody(), true);
+        
+                            $payment->update([
+                                'zoho_response' => json_encode($zohoBody),
+                                'zoho_status'   => isset($zohoBody['payment']) ? 1 : 0
+                            ]);
+        
+                            if (isset($zohoBody['payment'])) {
+                                event(new PaymentSuccessful($payment));
+                            }
+        
+                        } catch (RequestException $e) {
+                            Log::channel('payment')->error('Zoho payment failed', [
+                                'error' => $e->getMessage(),
+                                'response' => optional($e->getResponse())->getBody()->getContents()
+                            ]);
+                        }
                     }
                 }
             }
-    
-            /** =========================
-             * FINAL RESPONSE
-             * ========================= */
+        
             return response()->json([
                 'status' => true,
                 'message' => 'Payment processed successfully',
@@ -369,122 +478,714 @@ class ZohoPaymentController extends Controller
             ], 500);
         }
     }
+*/
 
-    public function syncAllPayments(Request $request)
-    {
+public function createOnlinePayment(Request $request)
+{
+
+    try {
+        $request->validate([
+
+            'payment_id' => 'required|string'
+
+        ]);
+
+        $paymentId = $request->payment_id;
+
+
+
+        $payment = DB::table('payments_master')
+
+                    ->where('payment_id', $paymentId)
+
+                    ->first();
+
+        if (!$payment) {
+
+            return response()->json([
+
+                'status'  => false,
+
+                'message' => 'Payment not found.'
+
+            ], 404);
+
+        }
+
+      
+
+        $payload = json_decode($payment->raw_payload, true);
+
+        if (!$payload) {
+
+            return response()->json([
+
+                'status'  => false,
+
+                'message' => 'Invalid payment payload.'
+
+            ], 400);
+
+        }
+
+       
+        $notes = $payload['notes'] ?? [];
+
+        $retailerId = $notes['retailer_id'] ?? null;
+
+       
+
+        if ($retailerId) {
+
+            $company = Company::find($retailerId);
+
+            if ($company) {
+
+                $company->update([
+
+                    'is_payment_success' => 1
+
+                ]);
+
+                return response()->json([
+
+                    'status'  => true,
+
+                    'message' => 'Company payment status updated successfully.',
+
+                    'company' => $company
+
+                ]);
+
+            }
+
+        }
+
+        return response()->json([
+
+            'status'  => false,
+
+            'message' => 'Retailer company not found.'
+
+        ], 404);
+
+    } catch (\Exception $e) {
+
+        Log::error('ONLINE PAYMENT VERIFY FAILED', [
+
+            'error'      => $e->getMessage(),
+
+            'payment_id' => $request->payment_id
+
+        ]);
+
+        return response()->json([
+
+            'status'  => false,
+
+            'message' => $e->getMessage()
+
+        ], 500);
+
+    }
+
+}
+public function syncAllPayments(Request $request)
+{
+    /*
+    |--------------------------------------------------------------------------
+    | VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
     $validator = Validator::make($request->all(), [
+
         'company_id' => 'required|integer',
+
         'user_id'    => 'required|integer',
+
         'role'       => 'nullable|string'
     ]);
 
     if ($validator->fails()) {
-        return response()->json(['errors' => $validator->errors()], 422);
+
+        return response()->json([
+
+            'status' => false,
+
+            'errors' => $validator->errors()
+
+        ], 422);
     }
 
-    $orgUser = Company::find($request->company_id);
-    
+    /*
+    |--------------------------------------------------------------------------
+    | LOAD COMPANY
+    |--------------------------------------------------------------------------
+    */
 
-    if (!$orgUser || !$orgUser->zoho_access_token || !$orgUser->zoho_org_id) {
-        return response()->json(['error' => 'Invalid Zoho credentials'], 400);
+    $orgUser = Company::find(
+        $request->company_id
+    );
+
+    if (
+        !$orgUser ||
+        !$orgUser->zoho_access_token ||
+        !$orgUser->zoho_org_id
+    ) {
+
+        return response()->json([
+
+            'status' => false,
+
+            'error' =>
+                'Invalid Zoho credentials'
+
+        ], 400);
     }
 
-    $client   = new \GuzzleHttp\Client();
-    $page     = 1;
-    $perPage  = 200; 
-    $allPayments = [];
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP CLIENT
+    |--------------------------------------------------------------------------
+    */
+
+    $client = new \GuzzleHttp\Client([
+
+        'timeout'         => 60,
+
+        'connect_timeout' => 20,
+
+        'http_errors'     => true,
+    ]);
+
+    /*
+    |--------------------------------------------------------------------------
+    | VARIABLES
+    |--------------------------------------------------------------------------
+    */
+
+    $page        = 1;
+
+    $perPage     = 200;
+
+    $totalSynced = 0;
+
+    $totalFailed = 0;
+
+    $maxPages    = 500;
 
     try {
+
         do {
-            $response = $client->get("https://www.zohoapis.in/books/v3/customerpayments", [
-                'headers' => [
-                    'Authorization' => 'Zoho-oauthtoken ' . $orgUser->zoho_access_token,
-                    'Content-Type'  => 'application/json',
-                ],
-                'query' => [
-                    'organization_id' => $orgUser->zoho_id,
-                    'per_page'        => $perPage,
-                    'page'            => $page,
-                ],
-            ]);
 
-            $body = json_decode((string) $response->getBody(), true);
+            Log::info(
+                'ZOHO PAYMENT SYNC PAGE START',
+                [
+                    'page' => $page
+                ]
+            );
 
+            /*
+            |--------------------------------------------------------------------------
+            | FETCH PAYMENTS
+            |--------------------------------------------------------------------------
+            */
 
-            if (!isset($body['customerpayments']) || empty($body['customerpayments'])) {
+            $response = $client->get(
+
+                'https://www.zohoapis.in/books/v3/customerpayments',
+
+                [
+
+                    'headers' => [
+
+                        'Authorization' =>
+
+                            'Zoho-oauthtoken ' .
+                            $orgUser->zoho_access_token,
+
+                        'Content-Type' =>
+                            'application/json',
+                    ],
+
+                    'query' => [
+
+                        'organization_id' =>
+                            $orgUser->zoho_org_id,
+
+                        /*
+                        |--------------------------------------------------------------------------
+                        | LOCATION FILTER
+                        |--------------------------------------------------------------------------
+                        */
+
+                        'location_id' =>
+                            $orgUser->location_id,
+
+                        'per_page' =>
+                            $perPage,
+
+                        'page' =>
+                            $page,
+                    ],
+                ]
+            );
+
+            $body = json_decode(
+                (string) $response->getBody(),
+                true
+            );
+
+            $payments =
+                $body['customerpayments']
+                ?? [];
+
+            /*
+            |--------------------------------------------------------------------------
+            | STOP IF EMPTY
+            |--------------------------------------------------------------------------
+            */
+
+            if (empty($payments)) {
+
+                Log::info(
+                    'NO MORE PAYMENTS FOUND',
+                    [
+                        'page' => $page
+                    ]
+                );
+
                 break;
             }
 
-            foreach ($body['customerpayments'] as $payment) {
-                
-                $retailer = Company::where('zoho_id', $payment['customer_id'])->first();
-                
-         
-           
-             
-                ZohoPayment::updateOrCreate(
-                    ['payment_id' => $payment['payment_id']],
-                    [
-                        'payment_number'  => $payment['payment_number'] ?? null,
-                        'z_json'          => json_encode($payment),
-                        'org_id'          => $orgUser->zoho_org_id,
-                        'user_id'         => $request->user_id,
-                        'org_code'        => $retailer->org_code ?? '',
-                        'org_name'        => $retailer->business_name ?? '',
-                        'role'            => $retailer->role ?? 0,
-                        'company_id'      => $request->company_id,
-                        'contact_id'      => $payment['customer_id'] ?? null,
-                        'amount'          => $payment['amount'] ?? null,
-                        'date'            => $payment['date'] ?? null,
-                        'created_by'      => $payment['created_by']['name'] ?? null,
-                        'customer_name'   => $payment['customer_name'] ?? null,
-                        'description'     => $payment['description'] ?? null,
-                        'payment_mode'    => $payment['payment_mode'] ?? null,
-                        'reference_number'=> $payment['reference_number'] ?? null,
-                        'level1'          => $Retailer->level1 ?? 0,
-                        'level2'          => $Retailer->level2 ?? 0,
-                        'level3'          => $Retailer->level3 ?? 0,
-                        'level4'          => $Retailer->level4 ?? 0,
-                        'level5'          => $Retailer->level5 ?? 0,
+            /*
+            |--------------------------------------------------------------------------
+            | PRELOAD RETAILERS
+            |--------------------------------------------------------------------------
+            */
+
+            $customerIds = collect($payments)
+                ->pluck('customer_id')
+                ->filter()
+                ->unique()
+                ->values()
+                ->toArray();
+
+            $retailers = Company::whereIn(
+                    'zoho_id',
+                    $customerIds
+                )
+                ->get()
+                ->keyBy('zoho_id');
+
+            /*
+            |--------------------------------------------------------------------------
+            | PROCESS PAYMENTS
+            |--------------------------------------------------------------------------
+            */
+
+            foreach ($payments as $payment) {
+
+                try {
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | PAYMENT ID
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $paymentId =
+                        $payment['payment_id']
+                        ?? null;
+
+                    if (!$paymentId) {
+
+                        $totalFailed++;
+
+                        continue;
+                    }
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | RETAILER
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $retailer =
+                        $retailers[
+                            $payment['customer_id']
+                            ?? ''
+                        ] ?? null;
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | SAFE VALUES
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $paymentNumber =
+                        $payment['payment_number']
+                        ?? null;
+
+                    $contactId =
+                        $payment['customer_id']
+                        ?? null;
+
+                    $locationId =
+                        $payment['location_id']
+                        ?? null;
                         
-                        'level1_name'   => $Retailer->level1_name ?? "",
-                        'level2_name'   => $Retailer->level2_name ?? "",
-                        'level3_name'   => $Retailer->level3_name ?? "",
-                        'level4_name'   => $Retailer->level4_name ?? "",
-                        'level5_name'   => $Retailer->level5_name ?? "",
-                    ]
-                );
+                    $locationName =
+                        $payment['location_name']
+                        ?? null;
+
+                    $customerName =
+                        $payment['customer_name']
+                        ?? null;
+
+                    $paymentMode =
+                        $payment['payment_mode']
+                        ?? null;
+
+                    $referenceNumber =
+                        $payment['reference_number']
+                        ?? null;
+
+                    $paymentDate =
+                        $payment['date']
+                        ?? null;
+
+                    $amount =
+                        (float) (
+                            $payment['amount']
+                            ?? 0
+                        );
+
+                    $unusedAmount =
+                        (float) (
+                            $payment['unused_amount']
+                            ?? 0
+                        );
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | UPSERT
+                    |--------------------------------------------------------------------------
+                    */
+
+                    ZohoPayment::updateOrCreate(
+
+                        [
+                            'payment_id' =>
+                                $paymentId
+                        ],
+
+                        [
+
+                            'payment_number' =>
+                                $paymentNumber,
+
+                            'z_json' =>
+                                json_encode(
+                                    $payment,
+                                    JSON_UNESCAPED_UNICODE
+                                ),
+
+                            'org_id' =>
+                                $orgUser->zoho_org_id,
+
+                            'user_id' =>
+                                $request->user_id,
+
+                            'company_id' =>
+                                $orgUser->id,
+
+                            'contact_id' =>
+                                $contactId,
+
+                            /*
+                            |--------------------------------------------------------------------------
+                            | LOCATION ID SAVED
+                            |--------------------------------------------------------------------------
+                            */
+
+                            'location_id' =>
+                                $locationId,
+                                
+                            'location_name' =>
+                                $locationName,
+
+                            'amount' =>
+                                $amount,
+
+                            'unused_amount' =>
+                                $unusedAmount,
+
+                            'date' =>
+                                $paymentDate,
+
+                            'customer_name' =>
+                                $customerName,
+
+                            'description' =>
+                                $payment['description']
+                                ?? null,
+
+                            'payment_mode' =>
+                                $paymentMode,
+
+                            'reference_number' =>
+                                $referenceNumber,
+
+                            'created_by' =>
+                                $payment['created_by']['name']
+                                ?? null,
+
+                            /*
+                            |--------------------------------------------------------------------------
+                            | RETAILER DATA
+                            |--------------------------------------------------------------------------
+                            */
+
+                            'org_code' =>
+                                $retailer->org_code
+                                ?? '',
+
+                            'org_name' =>
+                                $retailer->business_name
+                                ?? '',
+
+                            'role' =>
+                                $retailer->role
+                                ?? 0,
+
+                            'level1' =>
+                                $retailer->level1
+                                ?? 0,
+
+                            'level2' =>
+                                $retailer->level2
+                                ?? 0,
+
+                            'level3' =>
+                                $retailer->level3
+                                ?? 0,
+
+                            'level4' =>
+                                $retailer->level4
+                                ?? 0,
+
+                            'level5' =>
+                                $retailer->level5
+                                ?? 0,
+
+                            'level1_name' =>
+                                $retailer->level1_name
+                                ?? '',
+
+                            'level2_name' =>
+                                $retailer->level2_name
+                                ?? '',
+
+                            'level3_name' =>
+                                $retailer->level3_name
+                                ?? '',
+
+                            'level4_name' =>
+                                $retailer->level4_name
+                                ?? '',
+
+                            'level5_name' =>
+                                $retailer->level5_name
+                                ?? '',
+                        ]
+                    );
+
+                    $totalSynced++;
+
+                } catch (\Throwable $e) {
+
+                    $totalFailed++;
+
+                    Log::error(
+
+                        'PAYMENT SYNC FAILED',
+
+                        [
+
+                            'payment_id' =>
+                                $payment['payment_id']
+                                ?? null,
+
+                            'message' =>
+                                $e->getMessage(),
+
+                            'line' =>
+                                $e->getLine()
+                        ]
+                    );
+
+                    continue;
+                }
             }
 
-            $allPayments = array_merge($allPayments, $body['customerpayments']);
-            $hasMore = $body['page_context']['has_more_page'] ?? false;
+            /*
+            |--------------------------------------------------------------------------
+            | PAGINATION
+            |--------------------------------------------------------------------------
+            */
+
+            $hasMore =
+                $body['page_context']['has_more_page']
+                ?? false;
+
+            Log::info(
+                'ZOHO PAYMENT PAGE COMPLETED',
+                [
+
+                    'page'         => $page,
+
+                    'synced_count' => $totalSynced,
+
+                    'failed_count' => $totalFailed,
+
+                    'has_more'     => $hasMore
+                ]
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | MEMORY CLEANUP
+            |--------------------------------------------------------------------------
+            */
+
+            unset($payments);
+            unset($body);
+
+            gc_collect_cycles();
+
+            /*
+            |--------------------------------------------------------------------------
+            | NEXT PAGE
+            |--------------------------------------------------------------------------
+            */
+
             $page++;
 
-        } while ($hasMore && $page <= 50); // limit 10k payments max
+            /*
+            |--------------------------------------------------------------------------
+            | SMALL DELAY
+            |--------------------------------------------------------------------------
+            */
+
+            usleep(150000);
+
+        } while (
+            $hasMore &&
+            $page <= $maxPages
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | SUCCESS
+        |--------------------------------------------------------------------------
+        */
 
         return response()->json([
-            'status'  => true,
-            'message' => 'Payments synced successfully from Zoho.',
-            'count'   => count($allPayments),
+
+            'status' => true,
+
+            'message' =>
+                'Payments synced successfully.',
+
+            'total_synced' =>
+                $totalSynced,
+
+            'total_failed' =>
+                $totalFailed,
+
+            'pages_processed' =>
+                $page - 1,
         ]);
 
-    }catch (\GuzzleHttp\Exception\ClientException $e) {
-    $statusCode = $e->getResponse()->getStatusCode();
-    $errorBody  = json_decode($e->getResponse()->getBody()->getContents(), true);
+    } catch (\GuzzleHttp\Exception\ClientException $e) {
 
-   
-    return response()->json([
-        'status' => false,
-        'error'  => $errorBody['message'] ?? $e->getMessage(),
-    ], $statusCode);
+        $statusCode =
+            $e->getResponse()
+                ->getStatusCode();
 
-} catch (\Exception $e) {
- 
-    return response()->json([
-        'status' => false,
-        'error'  => $e->getMessage(),
-    ], 500);
-}
+        $errorBody = json_decode(
+
+            $e->getResponse()
+                ->getBody()
+                ->getContents(),
+
+            true
+        );
+
+        Log::error(
+
+            'ZOHO PAYMENT SYNC CLIENT ERROR',
+
+            [
+
+                'message' =>
+
+                    $errorBody['message']
+                    ?? $e->getMessage(),
+
+                'status_code' =>
+                    $statusCode
+            ]
+        );
+
+        return response()->json([
+
+            'status' => false,
+
+            'error'  =>
+
+                $errorBody['message']
+                ?? $e->getMessage(),
+
+        ], $statusCode);
+
+    } catch (\Throwable $e) {
+
+        Log::error(
+
+            'SYNC ALL PAYMENTS FAILED',
+
+            [
+
+                'message' =>
+                    $e->getMessage(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'file' =>
+                    $e->getFile(),
+
+                'trace' =>
+                    substr(
+                        $e->getTraceAsString(),
+                        0,
+                        3000
+                    )
+            ]
+        );
+
+        return response()->json([
+
+            'status' => false,
+
+            'error' =>
+                $e->getMessage(),
+
+        ], 500);
+    }
 }
     
     public function getPaymentSummary(Request $request)

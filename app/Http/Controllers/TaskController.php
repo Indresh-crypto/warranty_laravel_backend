@@ -9,6 +9,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
+use App\Services\TaskNotificationService;
+use App\Constants\NotificationTypes;
 
 
 class TaskController extends Controller
@@ -37,7 +39,8 @@ class TaskController extends Controller
         'priority'    => 'nullable|in:Low,Medium,High',
         'due_date'    => 'nullable|date',
         'extra_data'  => 'nullable|array',
-        'attachment'  => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:2048'
+        'attachment'  => 'nullable|file',
+        'task_type'  => 'nullable|string'
     ]);
 
     if ($validator->fails()) {
@@ -79,10 +82,20 @@ class TaskController extends Controller
                 'attachment'  => $filePath,
                 'extra_data'  => $request->extra_data,
                 'status'      => 1,
-                'created_by'  => $request->created_by
+                'created_by'  => $request->created_by,
+                'task_type'  => $request->task_type
+
             ]);
 
         DB::commit();
+        
+        TaskNotificationService::send(
+            $task->employee_id,
+            NotificationTypes::TASK_ASSIGNED,
+            'New Task Assigned',
+            'You have been assigned task: '.$task->title,
+            $task->id
+        );
 
         return response()->json([
             'status'  => true,
@@ -136,7 +149,8 @@ public function listTasks(Request $request)
         'has_attachment'  => 'nullable|boolean',
         'deleted'         => 'nullable|in:1,2',
 
-        'per_page'        => 'nullable|integer|min:1|max:100'
+        'per_page'        => 'nullable|integer|min:1|max:100',
+        'task_type'       =>  'nullable|string',
     ]);
 
     if ($validator->fails()) {
@@ -150,7 +164,8 @@ public function listTasks(Request $request)
         'manager:id,name,picture',
         'employee:id,name,picture',
         'creator:id,name,picture',
-        'remarks.user:id,name,picture'
+        'remarks.user:id,name,picture',
+        'taskType:id,name'
     ]);
 
     /*
@@ -266,10 +281,26 @@ public function listTasks(Request $request)
 
        if ($request->filled('from_due_date') && $request->filled('to_due_date')) {
 
-    $query->whereDate('due_date', '>=', $request->from_due_date)
-          ->whereDate('due_date', '<=', $request->to_due_date);
-}
+        $query->whereDate('due_date', '>=', $request->from_due_date)
+              ->whereDate('due_date', '<=', $request->to_due_date);
+    }
 
+
+    if ($request->filled('user_id') && $request->filled('all')) {
+    
+        $query->where(function ($q) use ($request) {
+            $q->where('employee_id', $request->user_id)
+              ->orWhere('created_by', $request->user_id);
+        })
+        ->whereDate('due_date', now()->toDateString());
+    }
+    
+    if ($request->filled('from_completed_date') && $request->filled('to_completed_date')) {
+
+            $query->where('status', 3)
+                  ->whereDate('completed_at', '>=', $request->from_completed_date)
+                  ->whereDate('completed_at', '<=', $request->to_completed_date);
+        }
     /*
     |--------------------------------------------------------------------------
     | Search
@@ -348,7 +379,8 @@ public function listTasks(Request $request)
             'description' => 'nullable|string',
             'status'      => 'nullable|in:1,2,3',
             'priority'    => 'nullable|in:Low,Medium,High',
-            'due_date'    => 'nullable|date'
+            'due_date'    => 'nullable|date',
+            'task_type'   =>  'nullable|string',
         ]);
     
         if ($validator->fails()) {
@@ -363,7 +395,8 @@ public function listTasks(Request $request)
             'description',
             'status',
             'priority',
-            'due_date'
+            'due_date',
+            'task_type'
         ]);
     
         /*
@@ -374,11 +407,28 @@ public function listTasks(Request $request)
     
         if ($request->status == 3) {
             $data['completed_at'] = now();
+            
+            TaskNotificationService::send(
+            $task->created_by,
+            NotificationTypes::TASK_COMPLETED,
+            'Task Completed',
+            'Task completed: '.$task->title,
+            $task->id
+        );
+
         }
     
         $task->update($data);
-    
-        return response()->json([
+            
+            TaskNotificationService::send(
+            $task->employee_id,
+            NotificationTypes::TASK_UPDATED,
+            'Task Updated',
+            'Task updated: '.$task->title,
+            $task->id
+        );
+        
+                return response()->json([
             'status'  => true,
             'message' => $request->status == 3 ? 'Task Completed Successfully' : 'Task Updated Successfully',
             'data'    => $task
@@ -401,7 +451,7 @@ public function listTasks(Request $request)
             'remark'         => 'nullable|string',
             'follow_up_date' => 'nullable|date',
             'extra_data'     => 'nullable|array',
-            'attachment'     => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:2048'
+            'attachment'     => 'nullable|file',
         ]);
     
         if ($validator->fails()) {
@@ -451,7 +501,7 @@ public function listTasks(Request $request)
                 $filePath = 'task_remarks/' . $fileName;
             }
     
-            // ✅ Create Remark
+            //  Create Remark
             $remark = TaskRemark::create([
                 'task_id'        => $request->task_id,
                 'user_id'        => $request->user_id,
@@ -462,6 +512,16 @@ public function listTasks(Request $request)
             ]);
     
             DB::commit();
+            
+          
+              TaskNotificationService::send(
+                $task->created_by,
+                NotificationTypes::TASK_REMARK,
+                'New Comment',
+                'New comment on task: '.$task->title,
+                $task->id
+            );
+
     
             return response()->json([
                 'status'  => true,
@@ -591,6 +651,14 @@ public function taskDashboard(Request $request)
             'employee_read_at' => now()
         ]);
     
+            TaskNotificationService::send(
+            $task->created_by,
+            NotificationTypes::TASK_READ,
+            'Task Read',
+            'Employee viewed task: '.$task->title,
+            $task->id
+        );
+
         return response()->json([
             'status' => true,
             'message' => 'Task marked as read',
@@ -934,35 +1002,38 @@ public function taskCalendarSummary(Request $request)
         $query->where('employee_id', $request->user_id);
     }
 
-    // Company (role 2) → all tasks
-
     /*
     |--------------------------------------------------------------------------
     | Date Range Filter
     |--------------------------------------------------------------------------
     */
 
-    $query->whereBetween('due_date', [
+    $tasks = $query->whereBetween('due_date', [
         $request->from_date,
         $request->to_date
-    ]);
+    ])
+    ->orderBy('due_date')
+    ->get();
 
     /*
     |--------------------------------------------------------------------------
-    | Calendar Aggregation
+    | Group By Date with Counts + Records
     |--------------------------------------------------------------------------
     */
 
-    $calendar = $query->selectRaw("
-        DATE(due_date) as date,
-        COUNT(id) as total,
-        SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as in_progress,
-        SUM(CASE WHEN status = 3 THEN 1 ELSE 0 END) as completed
-    ")
-    ->groupByRaw('DATE(due_date)')
-    ->orderBy('date')
-    ->get();
+    $calendar = $tasks->groupBy(function ($task) {
+        return \Carbon\Carbon::parse($task->due_date)->format('Y-m-d');
+    })->map(function ($items, $date) {
+
+        return [
+            'date' => $date,
+            'total' => $items->count(),
+            'pending' => $items->where('status', 1)->count(),
+            'in_progress' => $items->where('status', 2)->count(),
+            'completed' => $items->where('status', 3)->count(),
+            'tasks' => $items->values()
+        ];
+    })->values();
 
     return response()->json([
         'status' => true,

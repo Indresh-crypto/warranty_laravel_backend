@@ -11,7 +11,9 @@ use Carbon\Carbon;
 use App\Http\Requests\StoreZohoUserRequest;
 use Illuminate\Support\Facades\Hash;
 use App\Models\Company;
+use App\Models\OrgUsersMaster;
 
+use Illuminate\Support\Facades\Http;
 
 class ZohoCustomerController extends Controller
 {
@@ -122,176 +124,217 @@ class ZohoCustomerController extends Controller
         }
     }
 
-    public function updateZohoAccessToken(Request $request)
+    public function updateZohoAccessToken()
     {
-        $validator = Validator::make($request->all(), [
-            'company_id' => 'sometimes'
-        ]);
-    
-        if ($validator->fails()) {
+        try {
+
+        // =====================================================
+        // GET FIXED ADMIN
+        // =====================================================
+
+        $admin = OrgUsersMaster::find(5865);
+
+        if (!$admin) {
+
             return response()->json([
-                'status'  => false,
-                'message' => 'Validation error',
-                'errors'  => $validator->errors()
-            ], 422);
-        }
-    
-        $isSingleCompanyRequest = !empty($request->company_id);
-    
-        // Fetch companies
-        $companies = Company::query()
-            ->when($request->company_id, function ($q) use ($request) {
-                $ids = is_array($request->company_id)
-                    ? $request->company_id
-                    : array_map('trim', explode(',', $request->company_id));
-    
-                $q->whereIn('id', $ids);
-            })
-            ->get();
-    
-        if ($companies->isEmpty()) {
-            return response()->json([
-                'status'  => false,
-                'message' => 'No companies found'
+
+                'status' => false,
+
+                'message' => 'Admin user not found'
+
             ], 404);
         }
-    
-        $updated = [];
-        $failed  = [];
-    
-        /**
-         * 🚀 STEP 1: Verify & update Zoho credentials if explicitly sent
-         */
-        if ($request->filled([
-            'company_id',
-            'zoho_client_id',
-            'zoho_client_secret',
-            'zoho_redirect_uri',
-            'zoho_refresh_token'
-        ])) {
-            try {
-                $client = new \GuzzleHttp\Client();
-                $url = 'https://accounts.zoho.in/oauth/v2/token';
-    
-                $response = $client->post($url, [
-                    'query' => [
-                        'refresh_token' => $request->zoho_refresh_token,
-                        'client_id'     => $request->zoho_client_id,
-                        'client_secret' => $request->zoho_client_secret,
-                        'redirect_uri'  => $request->zoho_redirect_uri,
-                        'grant_type'    => 'refresh_token'
-                    ]
-                ]);
-    
-                $data = json_decode($response->getBody(), true);
-    
-                if (empty($data['access_token'])) {
-                    return response()->json([
-                        'status'  => false,
-                        'message' => 'Zoho credential verification failed',
-                        'error'   => $data['error'] ?? 'access_token not returned'
-                    ], 400);
-                }
-    
-                // Update Zoho credentials + token
-                Company::where('id', $request->company_id)->update([
-                    'zoho_client_id'     => $request->zoho_client_id,
-                    'zoho_client_secret' => $request->zoho_client_secret,
-                    'zoho_redirect_uri'  => $request->zoho_redirect_uri,
-                    'zoho_refresh_token' => $request->zoho_refresh_token,
-                    'zoho_access_token'  => $data['access_token']
-                ]);
-    
-            } catch (\Throwable $e) {
-                return response()->json([
-                    'status'  => false,
-                    'message' => 'Zoho verification exception',
-                    'error'   => $e->getMessage()
-                ], 500);
-            }
+
+        // =====================================================
+        // CHECK CREDENTIALS
+        // =====================================================
+
+        if (
+            empty($admin->zoho_client_id) ||
+            empty($admin->zoho_client_secret) ||
+            empty($admin->zoho_refresh_token)
+        ) {
+
+            return response()->json([
+
+                'status' => false,
+
+                'message' =>
+                    'Zoho credentials missing in OrgUsersMaster'
+
+            ], 400);
         }
-    
-        /**
-         * 🔄 STEP 2: Refresh access token(s)
-         */
-        foreach ($companies as $company) {
-            try {
-                $client = new \GuzzleHttp\Client();
-                $url = 'https://accounts.zoho.in/oauth/v2/token';
-    
-                $response = $client->post($url, [
-                    'query' => [
-                        'refresh_token' => $company->zoho_refresh_token,
-                        'client_id'     => $company->zoho_client_id,
-                        'client_secret' => $company->zoho_client_secret,
-                        'redirect_uri'  => $company->zoho_redirect_uri,
-                        'grant_type'    => 'refresh_token'
-                    ]
-                ]);
-    
-                $data = json_decode($response->getBody(), true);
-    
-                if (empty($data['access_token'])) {
-                    $errorMessage = $data['error'] ?? 'access_token not returned';
-    
-                    if ($isSingleCompanyRequest) {
-                        return response()->json([
-                            'status'  => false,
-                            'message' => 'Zoho token update failed',
-                            'error'   => $errorMessage,
-                            'company' => [
-                                'id'   => $company->id,
-                                'name' => $company->business_name
-                            ]
-                        ], 400);
-                    }
-    
-                    $failed[] = [
-                        'id'    => $company->id,
-                        'error' => $errorMessage
-                    ];
-                    continue;
-                }
-    
-                $company->update([
-                    'zoho_access_token' => $data['access_token']
-                ]);
-    
-                $updated[] = [
-                    'id'   => $company->id,
-                    'name' => $company->business_name
-                ];
-    
-            } catch (\Throwable $e) {
-    
-                \Log::error("Zoho Update Error (CompanyID {$company->id}): " . $e->getMessage());
-    
-                if ($isSingleCompanyRequest) {
-                    return response()->json([
-                        'status'  => false,
-                        'message' => 'Zoho token update failed',
-                        'error'   => $e->getMessage(),
-                        'company' => [
-                            'id'   => $company->id,
-                            'name' => $company->business_name
-                        ]
-                    ], 500);
-                }
-    
-                $failed[] = [
-                    'id'    => $company->id,
-                    'error' => $e->getMessage()
-                ];
-            }
+
+        // =====================================================
+        // REFRESH ACCESS TOKEN
+        // =====================================================
+
+        $client = new \GuzzleHttp\Client();
+
+        $response = $client->post(
+            'https://accounts.zoho.in/oauth/v2/token',
+            [
+
+                'query' => [
+
+                    'refresh_token' =>
+                        $admin->zoho_refresh_token,
+
+                    'client_id' =>
+                        $admin->zoho_client_id,
+
+                    'client_secret' =>
+                        $admin->zoho_client_secret,
+
+                    'redirect_uri' =>
+                        $admin->zoho_redirect_uri,
+
+                    'grant_type' =>
+                        'refresh_token'
+                ]
+            ]
+        );
+
+        $data = json_decode(
+            $response->getBody(),
+            true
+        );
+
+        if (empty($data['access_token'])) {
+
+            return response()->json([
+
+                'status' => false,
+
+                'message' =>
+                    'Zoho token refresh failed',
+
+                'error' =>
+                    $data['error']
+                    ?? 'access_token not returned'
+
+            ], 400);
         }
-    
-        return response()->json([
-            'status'  => true,
-            'message' => 'Zoho access token update completed',
-            'updated' => $updated,
-            'failed'  => $failed
+
+        $accessToken = $data['access_token'];
+
+        // =====================================================
+        // UPDATE ADMIN TOKEN
+        // =====================================================
+
+        $admin->update([
+
+            'zoho_access_token' =>
+                $accessToken
         ]);
+
+
+        // =====================================================
+        // CALL 1ST PROJECT API
+        // =====================================================
+        
+        try {
+        
+            $syncResponse = Http::timeout(30)
+        
+                ->post(
+                    'https://goelectronix.in/api/v1/zoho/update-token',
+                    [
+        
+                        'user_id' => 5865,
+                        'zoho_access_token'=> $accessToken
+                    ]
+                );
+        
+        
+        } catch (\Throwable $e) {
+        
+            \Log::error(
+                'FIRST PROJECT TOKEN SYNC FAILED',
+                [
+        
+                    'message' =>
+                        $e->getMessage()
+                ]
+            );
+        }
+
+        // =====================================================
+        // UPDATE COMPANIES
+        // =====================================================
+
+        Company::whereIn('id', [1, 5927])
+
+            ->update([
+
+                'zoho_client_id' =>
+                    $admin->zoho_client_id,
+
+                'zoho_client_secret' =>
+                    $admin->zoho_client_secret,
+
+                'zoho_redirect_uri' =>
+                    $admin->zoho_redirect_uri,
+
+                'zoho_refresh_token' =>
+                    $admin->zoho_refresh_token,
+
+                'zoho_access_token' =>
+                    $accessToken,
+
+                'updated_at' => now()
+            ]);
+
+        return response()->json([
+
+            'status' => true,
+
+            'message' =>
+                'Zoho access token updated successfully',
+
+            'data' => [
+
+                'org_user_master_id' =>
+                    $admin->id,
+
+                'updated_company_ids' =>
+                    [1, 5927],
+
+                'access_token' =>
+                    $accessToken
+            ]
+        ]);
+
+    } catch (\Throwable $e) {
+
+        \Log::error(
+            'ZOHO ACCESS TOKEN UPDATE FAILED',
+            [
+
+                'message' =>
+                    $e->getMessage(),
+
+                'line' =>
+                    $e->getLine(),
+
+                'file' =>
+                    $e->getFile()
+            ]
+        );
+
+        return response()->json([
+
+            'status' => false,
+
+            'message' =>
+                'Zoho token update failed',
+
+            'error' =>
+                $e->getMessage()
+
+        ], 500);
     }
+}
     public function getZohoContacts(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -551,6 +594,101 @@ class ZohoCustomerController extends Controller
                 'status' => false,
                 'error'  => $errorBody['message'] ?? $e->getMessage(),
             ], $e->getResponse()->getStatusCode());
+        }
+    }
+    
+    
+    //
+    
+    public function updateZohoAccessTokenFromApi(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'company_id'        => 'required|exists:companies,id',
+            'zoho_access_token' => 'required|string'
+        ]);
+    
+        if ($validator->fails()) {
+    
+            return response()->json([
+    
+                'status' => false,
+    
+                'errors' => $validator->errors()
+    
+            ], 422);
+        }
+    
+        try {
+
+    
+            $company = Company::find(
+                $request->company_id
+            );
+            
+           
+    
+            if (!$company) {
+    
+                return response()->json([
+    
+                    'status'  => false,
+    
+                    'message' => 'Company not found'
+    
+                ], 404);
+            }
+    
+        
+            $company->update(['zoho_access_token' =>$request->zoho_access_token]);
+    
+            $admin = OrgUserMaster::find(5865);
+            $admin->update(['zoho_access_token' =>$request->zoho_access_token]);
+            
+           
+            return response()->json([
+    
+                'status' => true,
+    
+                'message' =>
+    
+                    'Zoho access token updated successfully.'
+            ]);
+    
+        } catch (\Throwable $e) {
+    
+            \Log::error(
+    
+                'ZOHO TOKEN UPDATE API FAILED',
+    
+                [
+    
+                    'message' =>
+    
+                        $e->getMessage(),
+    
+                    'line' =>
+    
+                        $e->getLine(),
+    
+                    'file' =>
+    
+                        $e->getFile()
+                ]
+            );
+    
+            return response()->json([
+    
+                'status' => false,
+    
+                'message' =>
+    
+                    'Failed to update Zoho token.',
+    
+                'error' =>
+    
+                    $e->getMessage()
+    
+            ], 500);
         }
     }
 }

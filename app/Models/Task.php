@@ -23,7 +23,9 @@ class Task extends Model
         'attachment',
         'extra_data',
         'employee_read_at',
-        'created_by'
+        'created_by',
+        'completed_at',
+        'task_type'
     ];
 
     protected $casts = [
@@ -68,5 +70,10 @@ class Task extends Model
     {
         return $this->belongsTo(TaskUser::class, 'created_by');
     }
+    
+    public function taskType()
+{
+    return $this->belongsTo(TaskType::class, 'task_type');
+}
 
 }

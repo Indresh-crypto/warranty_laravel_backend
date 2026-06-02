@@ -24,7 +24,7 @@ class LeadCreateMail extends Mailable
 
     public function build()
     {
-        return $this->subject('Welcome to GoElectronix – Login Details')
+        return $this->subject('Welcome to WarrantyMitra – Login Details')
             ->markdown('emails.welcome_lead')
             ->with([
                 'lead'      => $this->lead,

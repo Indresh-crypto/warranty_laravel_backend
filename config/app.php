@@ -28,7 +28,6 @@ return [
 
     'env' => env('APP_ENV', 'production'),
 
-    'retailer_panel_url' => env('RETAILER_PANEL_URL'),
     /*
     |--------------------------------------------------------------------------
     | Application Debug Mode
@@ -54,6 +53,8 @@ return [
     */
 
     'url' => env('APP_URL', 'http://localhost'),
+    
+    'url_front' => env('APP_URL_FRONT', 'https://goelectronix.com'),
 
     /*
     |--------------------------------------------------------------------------
@@ -66,7 +67,7 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => 'Asia/Kolkata',
 
     /*
     |--------------------------------------------------------------------------
@@ -123,17 +124,5 @@ return [
         'driver' => env('APP_MAINTENANCE_DRIVER', 'file'),
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
-    
-    'cors' => [
-    'paths' => ['api/*', 'storage/*', '*'],
-    'allowed_methods' => ['*'],
-    'allowed_origins' => ['*'],
-    'allowed_origins_patterns' => [],
-    'allowed_headers' => ['*'],
-    'exposed_headers' => [],
-    'max_age' => 0,
-    'supports_credentials' => true,
-],
-
 
 ];

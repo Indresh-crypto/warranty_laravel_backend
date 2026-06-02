@@ -17,16 +17,23 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Jobs\SendCompanyCreatedWhatsapp;
 use App\Jobs\SendAgentPendingWhatsapp;
+use App\Jobs\SendRetailerWonWhatsapp;
+
 use App\Models\CompanyApiLog;
 
 use App\Mail\LeadCreateMail;
 use App\Mail\LeadWonMail;
+use App\Mail\RetailerAgreementMail;
+use App\Mail\CompanyUserWelcomeMail;
+
+use App\Models\OrgUsersMaster;
+
 
 use Illuminate\Support\Facades\Mail;
 
 class CommonUpdateController extends Controller
 {
-  
+  /*
     public function updateOrCreate(Request $request)
    {
 
@@ -44,14 +51,10 @@ class CommonUpdateController extends Controller
         ], 422);
     }
 
-    // =========================
-    // FIND COMPANY BY EMAIL
-    // =========================
+
     $user = Company::where('contact_email', $request->contact_email)->first();
     //SendAgentPendingWhatsapp::dispatch($user->id);
-    // =========================
-    // COMMON DATA
-    // =========================
+
     $data = $request->only([
         'business_name', 'contact_person', 'contact_phone', 'contact_email',
         'address_line1', 'address_line2', 'city', 'state', 'district', 'pincode',
@@ -73,16 +76,14 @@ class CommonUpdateController extends Controller
         "created_by_id"
     ]);
 
-    // =========================
-    // UPDATE EXISTING COMPANY
-    // =========================
+
     if ($user) {
         $user->update($data);
 
                 // Update lead package details if provided
         $updateData = [];
         
-        /* ================= Package update ================= */
+
         if ($request->filled('package_id')) {
             $updateData = [
                 'package_id'   => $request->package_id,
@@ -95,22 +96,35 @@ class CommonUpdateController extends Controller
             ];
         }
         
-        /* ================= Status update ================= */
-       
-        if ((int) $request->is_verified === 7) {
 
-                // Fetch lead safely
-                $lead = WLead::where('email', $request->contact_email)->first();
-            
-                if ($lead && !empty($lead->email)) {
+       if ((int) $request->is_verified === 7) {
+        
+
+            // Fetch lead safely
+            $lead = WLead::where('email', $request->contact_email)->first();
+        
+            if ($lead) {
+                $lead->update([
+                    'status' => 'won'
+                ]);
+                
+           
+        
+        
+        SendRetailerWonWhatsapp::dispatchSync($user->id);
+                
+        Mail::to($user->contact_email)->queue( new RetailerAgreementMail($user));
+
+
+        if (!empty($lead->email)) {
                     Mail::to($lead->email)->queue(
                         new LeadWonMail($lead)
                     );
                 }
             }
+        }
 
         
-        /* ================= Apply update ================= */
         if (!empty($updateData)) {
             WLead::where('email', $request->contact_email)
                 ->update($updateData);
@@ -123,9 +137,6 @@ class CommonUpdateController extends Controller
         ], 200);
     }
 
-    // =========================
-    // CREATE NEW COMPANY
-    // =========================
 
     // Fetch state_in & district_in from pincode
     $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
@@ -142,7 +153,7 @@ class CommonUpdateController extends Controller
 
 
 
-    $leaddata = WLead::where('email', $request->contact_email)->first();
+   $leaddata = WLead::where('email', $request->contact_email)->first();
     // Set defaults
    $plainPassword = random_int(100000, 999999);
   
@@ -164,10 +175,12 @@ class CommonUpdateController extends Controller
     // Create company
     $user = Company::create($data);
 
-    // =========================
-    // GENERATE USER CODE (ONLY ON CREATE)
-    // =========================
+
     switch ($user->role) {
+        
+        case 6: // Retailer
+            $userCode = "PRO-{$user->id}-{$stateIn}-{$districtIn}";
+            
         case 5: // Retailer
             $userCode = "RET-{$user->id}-{$stateIn}-{$districtIn}";
              
@@ -197,9 +210,7 @@ class CommonUpdateController extends Controller
     ]);
 
 
-    // =========================
-    // UPDATE WLEAD PACKAGE (IF EXISTS)
-    // =========================
+
     if ($request->filled('package_id')) {
         WLead::where('email', $request->contact_email)->update([
             'package_id'   => $request->package_id,
@@ -218,6 +229,313 @@ class CommonUpdateController extends Controller
         'data'    => $user->refresh()
     ], 201);
 }
+
+*/
+
+    
+    public function updateOrCreate(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'contact_email' => 'required|email',
+            'pincode'       => 'required|digits:6',
+            'role'          => 'required'
+        ]);
+        
+        
+    
+        if ($validator->fails()) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Validation error',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+    
+        // =========================
+        // CHECK ROLE (SKIP LEAD FOR ROLE 6)
+        // =========================
+        $isLeadFlow = (int) $request->role !== 6;
+    
+        // =========================
+        // FIND COMPANY BY EMAIL
+        // =========================
+        $user = Company::where('contact_email', $request->contact_email)->first();
+    
+        // =========================
+        // COMMON DATA
+        // =========================
+       $data = collect($request->only([
+    
+        'business_name',
+        'contact_person',
+        'contact_phone',
+        'contact_email',
+        'address_line1',
+        'address_line2',
+        'city',
+        'state',
+        'district',
+        'pincode',
+        'status',
+        'pan',
+        'gst',
+        'business_type',
+        'is_verified',
+        'is_payment_success',
+        'trade_name',
+        'account_no',
+        'ifsc_code',
+        'bank_name',
+        'branch_name',
+        'role',
+        'esign_verified',
+        'company_id',
+        'account_type',
+        'pan_verified',
+        'pan_json',
+        'zoho_access_token',
+        'zoho_org_id',
+        'zoho_client_id',
+        'zoho_client_secret',
+        'zoho_redirect_uri',
+        'owner_first_name',
+        'owner_middle_name',
+        'owner_last_name',
+        'owner_email',
+        'owner_contact',
+        'gst_json',
+        'bank_json',
+        'bank_verified',
+        'gst_verified',
+        'agent_code',
+        'zoho_id',
+        'agent_id',
+        'pay_now',
+        'pay_later',
+        'logo',
+        'domain',
+        'created_by_name',
+        'created_by_id',
+        'allow_wallet',
+        'catalog'
+    
+        ]))->filter(function ($value) {
+        
+            return !is_null($value)
+                && $value !== ''
+                && $value !== [];
+        
+        })->toArray();
+    
+        // =========================
+        // UPDATE EXISTING COMPANY
+        // =========================
+        if ($user) {
+    
+            $user->update($data);
+    
+            
+            OrgUsersMaster::updateOrCreate(
+                    ['org_code' => $user->company_code],
+                    [
+                        'business_name' => $user->business_name,
+                        'phone'         => $user->contact_phone,
+                        'email'         => $user->contact_email,
+                        'state'         => $user->state,
+                        'city'          => $user->city ?? $user->district,
+                        'pincode'       => $user->pincode,
+                        'company_id'    => $user->company_id,
+                        'role'          => $this->mapRole($user->role),
+                
+                        'is_mail_verified' => $user->is_mail_verified ?? 0,
+                        'is_wa_verified'   => $user->is_wa_verified ?? 0,
+                        'pan_verified'     => $user->pan_verified ?? 0,
+                        'gst_verified'     => $user->gst_verified ?? 0,
+                        'bank_verified'    => $user->bank_verified ?? 0,
+                        'esign_verified'   => $user->esign_verified ?? 0,
+                        'catalog'          => $user->catalog ?? "",
+                    ]
+                );
+        
+            $updateData = [];
+    
+            if ($request->filled('package_id')) {
+                $updateData = [
+                    'package_id'   => $request->package_id,
+                    'package_name' => $request->package_name,
+                    'badge_name'   => $request->badge_name,
+                    'badge_id'     => $request->badge_id,
+                    'benefits'     => $request->benefits,
+                    'eligibility'  => $request->eligibility,
+                    'lead_amount'  => $request->lead_amount,
+                ];
+            }
+    
+            if ($isLeadFlow && (int) $request->is_verified === 7) {
+    
+                $lead = WLead::where('email', $request->contact_email)->first();
+    
+                if ($lead) {
+                    $lead->update(['status' => 'won']);
+    
+                   try {
+    
+                        app(\App\Services\WhatsappService::class)
+                            ->onboardedSuccessfullyWhatsapp($user);
+                    
+                    } catch (\Throwable $e) {
+                    
+                        \Log::error(
+                            'ONBOARD SUCCESS WHATSAPP FAILED',
+                            [
+                    
+                                'company_id' =>
+                                    $user->id ?? null,
+                    
+                                'message' =>
+                                    $e->getMessage()
+                            ]
+                        );
+                    }
+    
+                    Mail::to($user->contact_email)->queue(
+                        new RetailerAgreementMail($user)
+                    );
+    
+                    Mail::to($lead->email)->queue(
+                        new LeadWonMail($lead)
+                    );
+                }
+            }
+    
+            if ($isLeadFlow && !empty($updateData)) {
+                $lead = WLead::where('email', $request->contact_email)->first();
+                if ($lead) {
+                    $lead->update($updateData);
+                }
+            }
+    
+            return response()->json([
+                'status'  => true,
+                'message' => 'Company updated successfully',
+                'data'    => $user->refresh()
+            ], 200);
+        }
+    
+        // =========================
+        // CREATE NEW COMPANY
+        // =========================
+        $pincodeData = IndiaPincode::where('pincode', $request->pincode)->first();
+    
+        if (!$pincodeData) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Invalid pincode'
+            ], 422);
+        }
+    
+        $stateIn    = $pincodeData->state_in;
+        $districtIn = $pincodeData->district_in;
+    
+        $leaddata = null;
+        if ($isLeadFlow) {
+            $leaddata = WLead::where('email', $request->contact_email)->first();
+        }
+    
+        // Generate password
+        $plainPassword = random_int(100000, 999999);
+    
+        $data['password']    = Hash::make($plainPassword);
+        $data['status']      = $request->status ?? 1;
+        $data['is_verified'] = $request->is_verified ?? 0;
+        $data['senior_id']   = $request->senior_id ?? 0;
+        $data['agent_code']  = $request->agent_code ?? 0;
+    
+        if ($isLeadFlow && $leaddata) {
+            $data['created_by_id']   = $leaddata->created_by_id ?? 0;
+            $data['created_by_name'] = $leaddata->created_by_name ?? '';
+        } else {
+            $data['created_by_id']   = $request->created_by_id ?? 0;
+            $data['created_by_name'] = $request->created_by_name ?? 'Self';
+        }
+    
+        // =========================
+        // CREATE COMPANY
+        // =========================
+        $user = Company::create($data);
+    
+        // =========================
+        // GENERATE COMPANY CODE
+        // =========================
+        switch ($user->role) {
+    
+            case 6:
+                $userCode = "PRO-{$user->id}-{$stateIn}-{$districtIn}";
+                break;
+    
+            case 5:
+                $userCode = "ARP-{$user->id}-{$stateIn}-{$districtIn}";
+                break;
+    
+            case 4:
+                $userCode = "CP-{$user->id}-{$stateIn}-{$districtIn}";
+                SendAgentPendingWhatsapp::dispatch($user->id);
+                break;
+    
+            case 3:
+                $userCode = "CPE-{$user->id}-{$stateIn}-{$districtIn}";
+                break;
+    
+            case 2:
+                $userCode = "MCP-{$user->id}-{$stateIn}-{$districtIn}";
+                SendCompanyCreatedWhatsapp::dispatch($user->id);
+                break;
+    
+            default:
+                $userCode = "USR-{$user->id}-{$stateIn}-{$districtIn}";
+                break;
+        }
+    
+        $user->update([
+            'company_code' => $userCode
+        ]);
+    
+        // =========================
+        // SEND MAIL AFTER CREATE
+        // =========================
+        $signinUrl = "https://retailer.goelectronix.com/signin?email=" . urlencode($user->contact_email);
+    
+        if ($isLeadFlow && $leaddata) {
+            Mail::to($leaddata->email)->send(
+                new LeadCreateMail($leaddata, $signinUrl, $plainPassword)
+            );
+        } else {
+            Mail::to($user->contact_email)->send(
+                new CompanyUserWelcomeMail($user, $signinUrl, $plainPassword)
+            );
+        }
+    
+        // =========================
+        // UPDATE LEAD PACKAGE
+        // =========================
+        if ($isLeadFlow && $leaddata && $request->filled('package_id')) {
+            $leaddata->update([
+                'package_id'   => $request->package_id,
+                'package_name' => $request->package_name,
+                'badge_name'   => $request->badge_name,
+                'badge_id'     => $request->badge_id,
+                'benefits'     => $request->benefits,
+                'eligibility'  => $request->eligibility,
+                'lead_amount'  => $request->lead_amount
+            ]);
+        }
+    
+        return response()->json([
+            'status'  => true,
+            'message' => 'Company created successfully and credentials emailed',
+            'data'    => $user->refresh()
+        ], 201);
+    }
     private function generateCode($prefix, $model, $column)
     {
         $last = $model::orderBy('id','desc')->first();
@@ -265,6 +583,24 @@ class CommonUpdateController extends Controller
     
         if ($request->filled('created_by_name')) {
             $query->where('created_by_name', $request->created_by_name);
+        }
+        
+        if ($request->filled('flag')) {
+            $query->where('flag', $request->flag);
+        }
+        
+     if ($request->role == 6 && $request->filled('company_id')) {
+
+            $query->with([
+        
+                'parent:id,business_name,contact_person,contact_phone,company_code'
+        
+            ]);
+        
+            // company_id is NOT primary key, so use it correctly
+        
+            $query->where('company_id', $request->company_id);
+        
         }
     
         // ---------------------------------
@@ -537,19 +873,19 @@ class CommonUpdateController extends Controller
     // Generate user code
     switch ($company->role) {
         case 5: // Retailer
-            $userCode = "RET-" . $company->company_id . "-" . $stateIn . "-" . $districtIn;
+            $userCode = "ARP-" . $company->company_id . "-" . $stateIn . "-" . $districtIn;
             break;
 
         case 4: // Agent
-            $userCode = "AGT-" . $company->company_id . "-" . $stateIn . "-" . $districtIn;
+            $userCode = "CP-" . $company->company_id . "-" . $stateIn . "-" . $districtIn;
             break;
 
         case 3: // CPE
-            $userCode = "CPE-" . $company->company_id . "-" . $stateIn . "-" . $districtIn;
+            $userCode = "EMP-" . $company->company_id . "-" . $stateIn . "-" . $districtIn;
             break;
 
         case 2: // Company
-            $userCode = "COMP" . $company->id . "-" . $stateIn . "-" . $districtIn;
+            $userCode = "MCP" . $company->id . "-" . $stateIn . "-" . $districtIn;
             break;
 
         default:
@@ -609,4 +945,17 @@ public function getCompanyApiLogs(Request $request, $companyId)
         'data'   => $logs
     ]);
 }
+
+private function mapRole($role)
+{
+    return match ((int)$role) {
+        5 => 'retailer',
+        4 => 'agent',
+        3 => 'promoter',
+        2 => 'company',
+        6 => 'promoter',
+        default => 'user',
+    };
+}
+
 }

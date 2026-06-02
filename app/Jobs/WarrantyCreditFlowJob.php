@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Support\Str;
 use GuzzleHttp\Client;
+use Illuminate\Support\Facades\Log;
+use App\Services\WhatsappService;
 
 class WarrantyCreditFlowJob implements ShouldQueue
 {
@@ -53,13 +55,23 @@ class WarrantyCreditFlowJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
-            $exists = WDevice::where('product_id', $this->payload['product_id'])
+           
+           $exists = WDevice::where('product_id', $this->payload['product_id'])
                 ->where(function ($query) {
-                    $query->where('imei1', $this->payload['imei1'])
-                          ->orWhere('imei2', $this->payload['imei2'] ?? null)
-                          ->orWhere('serial', $this->payload['serial'] ?? null);
+            
+                    $query->where('imei1', $this->payload['imei1']);
+            
+                    if (!empty($this->payload['imei2'])) {
+                        $query->orWhere('imei2', $this->payload['imei2']);
+                    }
+            
+                    if (!empty($this->payload['serial'])) {
+                        $query->orWhere('serial', $this->payload['serial']);
+                    }
+            
                 })
                 ->exists();
+                
 
             if ($exists) {
                 throw new \Exception('Device already exists');
@@ -71,12 +83,12 @@ class WarrantyCreditFlowJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
-            $product_mrp = ($this->payload['product_mrp'] / 100)
-                * $this->payload['device_price'];
+           $product_mrp = (($this->payload['product_mrp'] ?? 0) / 100)
+                            * ($this->payload['device_price'] ?? 0);
 
             $device = WDevice::create([
 
-                'imei1' => $this->payload['imei1'],
+                'imei1' => $this->payload['imei1'] ?? null,
                 'imei2' => $this->payload['imei2'] ?? null,
                 'serial' => $this->payload['serial'] ?? null,
 
@@ -175,7 +187,8 @@ class WarrantyCreditFlowJob implements ShouldQueue
             $creditBody = json_decode($creditResponse->getBody(), true);
             $availableCredits = $creditBody['creditnotes'] ?? [];
 
-            $remainingBalance = $invoice['balance'] ?? $invoice['total'];
+          
+            $remainingBalance = $invoice['balance'] ?? $invoice['total'] ?? 0;
 
             /*
             |--------------------------------------------------------------------------
@@ -258,6 +271,30 @@ class WarrantyCreditFlowJob implements ShouldQueue
             ]);
 
             DB::commit();
+            
+            try {
+
+    $retailerCompany = Company::find($this->payload['retailer_id']);
+
+                if ($retailerCompany && $device) {
+            
+                    app(WhatsappService::class)
+                        ->sendRetailerPaymentSuccess(
+                            $retailerCompany,
+                            $device
+                        );
+                }
+            
+            } catch (\Throwable $e) {
+            
+                Log::error('Retailer Payment WhatsApp Failed', [
+                    'retailer_id' => $this->payload['retailer_id'] ?? null,
+                    'device_id'   => $device->id ?? null,
+                    'error'       => $e->getMessage()
+                ]);
+            
+            }
+
 
         } catch (\Exception $e) {
 

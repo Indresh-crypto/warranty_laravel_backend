@@ -40,13 +40,20 @@ class WCustomer extends Model
         return $this->hasMany(WCustomerAddress::class, 'w_customer_id');
     }
  
+ /*
     public function devices()
     {
         return $this->hasMany(WDevice::class, 'w_customer_id', 'id');
     }
+*/
     public function retailer()
     {
         return $this->belongsTo(Company::class, 'retailer_id');
+    }
+    
+     public function devices()
+    {
+        return $this->hasMany(WDevice::class, 'w_customer_id');
     }
 
 }

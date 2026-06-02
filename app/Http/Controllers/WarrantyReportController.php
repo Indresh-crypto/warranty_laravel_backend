@@ -128,6 +128,10 @@ class WarrantyReportController extends Controller
         $query->when($request->retailer_id, fn($q) =>
             $q->where('w_devices.retailer_id', $request->retailer_id)
         );
+        
+         $query->when($request->promoter_id, fn($q) =>
+            $q->where('w_devices.promoter_id', $request->promoter_id)
+        );
     
         $query->when($request->from_date && $request->to_date, fn($q) =>
             $q->whereBetween('w_devices.created_at', [
@@ -214,6 +218,11 @@ class WarrantyReportController extends Controller
         $q->where('w_devices.category_name', 'like', "%{$request->category_name}%")
     );
 
+
+    $query->when($request->promoter_id, fn($q) =>
+        $q->where('w_devices.promoter_id', $request->promoter_id)
+    );
+    
     /* ================= AGGREGATE ================= */
     $data = $query
         ->selectRaw("
@@ -252,6 +261,10 @@ public function geographyRevenue(Request $request)
 
     $query->when($request->retailer_id, fn ($q) =>
         $q->where('w_devices.retailer_id', $request->retailer_id)
+    );
+    
+     $query->when($request->promoter_id, fn ($q) =>
+        $q->where('w_devices.promoter_id', $request->promoter_id)
     );
 
     $query->when($request->from_date && $request->to_date, fn ($q) =>
@@ -320,68 +333,157 @@ public function geographyRevenue(Request $request)
             }
             
 
-public function topSellingRetailers(Request $request)
-{
-    $fromDate  = $request->from_date;   // optional
-    $toDate    = $request->to_date;     // optional
-    $companyId = $request->company_id;  // optional (parent company / promoter)
-
-    $query = Company::query()
-        ->select([
-            'companies.id',
-            'companies.business_name as retailer_name',
-            'companies.state',
-            'companies.district',
-            'companies.city',
-            'companies.pincode',
-
-            DB::raw('COUNT(w_devices.id) as total_devices'),
-            DB::raw('COALESCE(SUM(w_devices.product_price),0) as total_sales_value')
-        ])
-        ->join('w_devices', function ($join) {
-            $join->on('w_devices.retailer_id', '=', 'companies.id')
-                 ->where('w_devices.status', 1);
-        })
-        ->where('companies.role', 5) // retailers only
-        ->groupBy(
-            'companies.id',
-            'companies.business_name',
-            'companies.state',
-            'companies.district',
-            'companies.city',
-            'companies.pincode'
-        )
-        ->orderByDesc('total_sales_value');
-
-    /**
-     * 🔹 OPTIONAL DATE FILTER
-     */
-    if ($fromDate && $toDate) {
-        $query->whereBetween('w_devices.created_at', [
-            $fromDate . ' 00:00:00',
-            $toDate   . ' 23:59:59'
+    public function topSellingRetailers(Request $request)
+    {
+        $fromDate  = $request->from_date;   // optional
+        $toDate    = $request->to_date;     // optional
+        $companyId = $request->company_id;  // optional (parent company / promoter)
+    
+        $query = Company::query()
+            ->select([
+                'companies.id',
+                'companies.business_name as retailer_name',
+                'companies.state',
+                'companies.district',
+                'companies.city',
+                'companies.pincode',
+    
+                DB::raw('COUNT(w_devices.id) as total_devices'),
+                DB::raw('COALESCE(SUM(w_devices.product_price),0) as total_sales_value')
+            ])
+            ->join('w_devices', function ($join) {
+                $join->on('w_devices.retailer_id', '=', 'companies.id')
+                     ->where('w_devices.status', 1);
+            })
+            ->where('companies.role', 5) // retailers only
+            ->groupBy(
+                'companies.id',
+                'companies.business_name',
+                'companies.state',
+                'companies.district',
+                'companies.city',
+                'companies.pincode'
+            )
+            ->orderByDesc('total_sales_value');
+    
+        /**
+         * 🔹 OPTIONAL DATE FILTER
+         */
+        if ($fromDate && $toDate) {
+            $query->whereBetween('w_devices.created_at', [
+                $fromDate . ' 00:00:00',
+                $toDate   . ' 23:59:59'
+            ]);
+        }
+    
+        /**
+         * 🔹 OPTIONAL COMPANY FILTER
+         * (when devices belong to a specific company)
+         */
+        if (!empty($companyId)) {
+            $query->where('w_devices.company_id', $companyId);
+        }
+    
+        $data = $query->get();
+    
+        return response()->json([
+            'status' => true,
+            'filters' => [
+                'company_id' => $companyId,
+                'from_date'  => $fromDate,
+                'to_date'    => $toDate,
+            ],
+            'data' => $data
         ]);
     }
+    
+    public function sendInactiveRetailerWhatsapp()
+    {
+    try {
 
-    /**
-     * 🔹 OPTIONAL COMPANY FILTER
-     * (when devices belong to a specific company)
-     */
-    if (!empty($companyId)) {
-        $query->where('w_devices.company_id', $companyId);
+        $days = 3;
+
+        /*
+        |--------------------------------------------------------------------------
+        | STEP 1: GET LAST DEVICE DATE PER RETAILER
+        |--------------------------------------------------------------------------
+        */
+       $inactiveRetailers = Company::where('role', 5)
+            ->whereNotIn('id', function ($query) use ($days) {
+                $query->select('company_id')
+                    ->from('w_devices')
+                    ->where('created_at', '>=', now()->subDays($days))
+                    ->groupBy('company_id');
+            })
+            ->get();
+
+        /*
+        |--------------------------------------------------------------------------
+        | STEP 2: LOOP & SEND WHATSAPP
+        |--------------------------------------------------------------------------
+        */
+        $client = new Client();
+
+        foreach ($inactiveRetailers as $retailer) {
+
+            if (!$retailer->contact_phone) {
+                continue;
+            }
+
+            $destination = '91' . ltrim($retailer->contact_phone, '0');
+
+            $retailerName = $retailer->business_name ?? 'Retailer';
+            $companyName  = 'Goelectronix';
+            $link         = asset('images/reminder.jpg'); // optional image
+
+            $client->post(
+                'https://api.gupshup.io/wa/api/v1/template/msg',
+                [
+                    'headers' => [
+                        'apikey' => config('services.gupshup.key'),
+                        'Content-Type' => 'application/x-www-form-urlencoded',
+                    ],
+                    'form_params' => [
+                        'channel' => 'whatsapp',
+                        'source' => config('services.gupshup.source'),
+                        'destination' => $destination,
+                        'src.name' => config('services.gupshup.app_name'),
+
+                        'template' => json_encode([
+                            'id' => '7daef5bb-b87c-41e8-a646-b179277da272',
+                            'params' => [
+                                $retailerName,
+                                $days,
+                                "+919372011028",
+                                $companyName
+                            ],
+                        ]),
+
+                        'message' => json_encode([
+                            "type" => "image",
+                            "image" => [
+                                "link" => $link
+                            ]
+                        ]),
+                    ],
+                ]
+            );
+        }
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Inactive retailers WhatsApp sent successfully',
+            'count' => count($inactiveRetailers)
+        ]);
+
+    } catch (\Exception $e) {
+
+        return response()->json([
+            'status' => false,
+            'message' => 'WhatsApp Failed',
+            'error' => $e->getMessage()
+        ], 500);
     }
-
-    $data = $query->get();
-
-    return response()->json([
-        'status' => true,
-        'filters' => [
-            'company_id' => $companyId,
-            'from_date'  => $fromDate,
-            'to_date'    => $toDate,
-        ],
-        'data' => $data
-    ]);
 }
 
 }

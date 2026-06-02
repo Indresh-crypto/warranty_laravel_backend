@@ -53,8 +53,8 @@ class WarrantyInvoiceController extends Controller
         foreach ($devices as $companyId => $retailers) {
     
             // 🔐 Company Zoho credentials
-           $company = Company::where('id', $companyId)
-                  ->where('role', 2)
+           $company = Company::where('id', 1)
+                  
                   ->first();
     
  
@@ -180,8 +180,7 @@ class WarrantyInvoiceController extends Controller
         }
 
         // 🔐 Company (Zoho org)
-        $company = Company::where('id', $device->company_id)
-            ->where('role', 2)
+        $company = Company::where('id', 1)
             ->first();
     
         if (!$company || !$company->zoho_access_token || !$company->zoho_org_id) {

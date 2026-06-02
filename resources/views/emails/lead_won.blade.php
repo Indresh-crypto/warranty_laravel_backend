@@ -26,7 +26,7 @@ You are officially part of the GoElectronix partner ecosystem 🚀
 
 You can now log in to your dashboard using your registered email:
 
-@component('mail::button', ['url' => 'https://warrantynew.goelectronix.co.in'])
+@component('mail::button', ['url' => 'https://retailer.goelectronix.co.in'])
 Login to Dashboard
 @endcomponent
 

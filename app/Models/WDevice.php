@@ -4,12 +4,14 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\Company;
 
 class WDevice extends Model
 {
     use HasFactory;
 
     protected $table = 'w_devices';
+
     protected $fillable = [  
         'name',
         'imei1',
@@ -70,14 +72,31 @@ class WDevice extends Model
         'zoho_payment_id',
         'razorpay_payment_id',
         'paid_at',
-        'model_id'
-        
+        'model_id',
+        'is_from_wallet',
+        'subscription_id'
     ];
+
+   protected static function booted()
+   {
+        static::created(function ($device) {
+    
+            if ($device->retailer_id) {
+                Company::where('id', $device->retailer_id)
+    
+                    ->update([
+                        'last_sold_at' => now(),
+                        'flag'         => 'working'
+                    ]);
+            }
+        });
+   }
 
     public function customer()
     {
         return $this->belongsTo(WCustomer::class, 'w_customer_id');
     }
+
     public function customerWithImei()
     {
         return $this->belongsTo(WCustomer::class, 'imei1');
@@ -96,5 +115,20 @@ class WDevice extends Model
     public function promoter()
     {
         return $this->belongsTo(Company::class, 'promoter_id');
+    }
+
+    public function devices()
+    {
+        return $this->hasMany(WDevice::class, 'company_id');
+    }
+    
+    public function getInvoiceDataAttribute()
+    {
+        return json_decode($this->invoice_json, true);
+    }
+    
+    public function retailer()
+    {
+        return $this->belongsTo(Company::class, 'retailer_id');
     }
 }

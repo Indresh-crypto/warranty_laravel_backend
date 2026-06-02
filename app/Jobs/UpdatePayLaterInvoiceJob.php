@@ -19,7 +19,7 @@ use GuzzleHttp\Client;
 
 use App\Mail\InvoiceCreatedMail;
 use App\Mail\PaymentCompletedMail;
-
+use App\Services\WhatsappService;
 class UpdatePayLaterInvoiceJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
@@ -53,6 +53,11 @@ class UpdatePayLaterInvoiceJob implements ShouldQueue
             $paymentId     = $this->payload['payment_id'];
             $invoiceId     = $this->payload['invoice_id'];
             $requestAmount = (float) $this->payload['amount'];
+            
+            $amount     = (float) $this->payload['amount'];
+            $companyId  = $this->payload['company_id'];
+            $retailerId = $this->payload['retailer_id'];
+            
 
             Log::info('PAY LATER JOB STARTED', compact('paymentId','invoiceId'));
 
@@ -118,9 +123,6 @@ class UpdatePayLaterInvoiceJob implements ShouldQueue
                     $invoiceId
                 );
 
-                if (empty($zohoPayment['payment'])) {
-                    throw new \Exception('Zoho payment failed');
-                }
             }
 
             /* ================= FETCH UPDATED INVOICE ================= */
@@ -248,6 +250,10 @@ class UpdatePayLaterInvoiceJob implements ShouldQueue
             ) {
 
                 Mail::to($device->customer->email)
+                    ->queue(new PaymentCompletedMail(
+                        $device->fresh(['customer'])
+                    ));
+                Mail::to($retailer->contact_email)
                     ->queue(new PaymentCompletedMail(
                         $device->fresh(['customer'])
                     ));

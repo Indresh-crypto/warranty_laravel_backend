@@ -21,6 +21,9 @@ use App\Models\WCustomer;
 use Illuminate\Support\Facades\Cache;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\RequestException;
+use App\Models\OrgUsersMaster;
+use App\Models\WLead;
+use App\Models\CandidateWhatsappMessage;
 
 
 class WhatsappController extends Controller
@@ -76,158 +79,363 @@ class WhatsappController extends Controller
         ]);
     }
    
-    public function sendOtp(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'contact_phone'     => 'required|digits:10',
-            'old_contact_phone' => 'nullable|digits:10',
-            'company_id'        => 'required|integer',
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => $validator->errors()->first(),
-                'errors'  => $validator->errors()
-            ], 422);
-        }
-    
-        $company = Company::find($request->company_id);
-    
-        if (!$company) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Company not found.'
-            ], 404);
-        }
-    
-        $newPhone = $request->contact_phone;
-        $oldPhone = $request->old_contact_phone;
-    
-        /*
-        |--------------------------------------------------------------------------
-        | PHONE UPDATE LOGIC
-        |--------------------------------------------------------------------------
-        */
-    
-        if (!empty($oldPhone)) {
-    
-            if ($company->contact_phone != $oldPhone) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Old phone number does not match our records.'
-                ], 400);
-            }
+  public function sendOtp(Request $request)
+  {
     /*
-            if ($oldPhone == $newPhone) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'New phone number must be different from old number.'
-                ], 400);
-            }
+    |--------------------------------------------------------------------------
+    | VALIDATION
+    |--------------------------------------------------------------------------
     */
-            // Update phone
-            $company->contact_phone = $newPhone;
-            $company->save();
-        }
-    
+
+    $validator = Validator::make($request->all(), [
+
+        'contact_phone' =>
+            'required|digits:10',
+
+        'old_contact_phone' =>
+            'nullable|digits:10',
+
+        'company_id' =>
+            'required|integer',
+    ]);
+
+    if ($validator->fails()) {
+
+        return response()->json([
+
+            'success' => false,
+
+            'message' =>
+                $validator->errors()->first(),
+
+            'errors' =>
+                $validator->errors()
+
+        ], 422);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | LOAD COMPANY
+    |--------------------------------------------------------------------------
+    */
+
+    $company = Company::find(
+        $request->company_id
+    );
+
+    if (!$company) {
+
+        return response()->json([
+
+            'success' => false,
+
+            'message' =>
+                'Company not found.'
+
+        ], 404);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | VARIABLES
+    |--------------------------------------------------------------------------
+    */
+
+    $newPhone =
+        trim($request->contact_phone);
+
+    $oldPhone =
+        trim($request->old_contact_phone);
+
+    /*
+    |--------------------------------------------------------------------------
+    | PHONE UPDATE LOGIC
+    |--------------------------------------------------------------------------
+    */
+
+    if (!empty($oldPhone)) {
+
         /*
         |--------------------------------------------------------------------------
-        | GENERATE OTP
+        | VERIFY OLD PHONE
         |--------------------------------------------------------------------------
         */
-    
-        $otp = rand(100000, 999999);
-    
-        Cache::put("otp_{$newPhone}", $otp, now()->addMinutes(3));
-    
-        $destination = '91' . $newPhone;
-    
+
+        if (
+            trim($company->contact_phone)
+            != $oldPhone
+        ) {
+
+            return response()->json([
+
+                'success' => false,
+
+                'message' =>
+                    'Old phone number does not match our records.'
+
+            ], 400);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | UPDATE COMPANY PHONE
+        |--------------------------------------------------------------------------
+        */
+
+        DB::transaction(function () use (
+            $company,
+            $oldPhone,
+            $newPhone
+        ) {
+
+            $company->contact_phone =
+                $newPhone;
+
+            $company->save();
+
+            /*
+            |--------------------------------------------------------------------------
+            | UPDATE WLEAD PHONE
+            |--------------------------------------------------------------------------
+            */
+
+            WLead::where(
+                    'phone',
+                    $oldPhone
+                )
+                ->update([
+
+                    'phone' =>
+                        $newPhone
+                ]);
+        }, 3);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | GENERATE OTP
+    |--------------------------------------------------------------------------
+    */
+
+    $otp = rand(100000, 999999);
+
+    /*
+    |--------------------------------------------------------------------------
+    | STORE OTP
+    |--------------------------------------------------------------------------
+    */
+
+    Cache::put(
+
+        'otp_' . $newPhone,
+
+        $otp,
+
+        now()->addMinutes(3)
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | DESTINATION
+    |--------------------------------------------------------------------------
+    */
+
+    $destination =
+        '91' . $newPhone;
+
+    /*
+    |--------------------------------------------------------------------------
+    | TEMPLATE
+    |--------------------------------------------------------------------------
+    */
+
+    $template = [
+
+        'id' =>
+            '8d3e0965-dd63-4fce-a0aa-5e94aac810bc',
+
+        'params' => [
+
+            (string) $otp,
+
+            (string) $otp
+        ]
+    ];
+
+    try {
+
         /*
         |--------------------------------------------------------------------------
         | SEND WHATSAPP OTP
         |--------------------------------------------------------------------------
         */
-    
-        $apiKey  = config('services.gupshup.key');
-        $source  = '15557661628';
-        $appName = 'GoelectronixWarranty';
-    
-        $template = json_encode([
-            'id'     => '20d82dbd-0fcb-46b4-a574-9b69719ce49a',
-            'params' => [$otp],
-        ]);
-    
+
         $response = Http::asForm()
-            ->withHeaders(['apikey' => $apiKey])
-            ->post('https://api.gupshup.io/wa/api/v1/template/msg', [
-                'channel'     => 'whatsapp',
-                'source'      => $source,
-                'destination' => $destination,
-                'src.name'    => $appName,
-                'template'    => $template,
-            ]);
-    
-        if ($response->successful()) {
+
+            ->timeout(60)
+
+            ->withHeaders([
+
+                'apikey' =>
+                    config('services.gupshup.key'),
+
+                'Cache-Control' =>
+                    'no-cache',
+
+                'cache-control' =>
+                    'no-cache',
+            ])
+
+            ->post(
+
+                'https://api.gupshup.io/wa/api/v1/template/msg',
+
+                [
+
+                    'channel' =>
+                        'whatsapp',
+
+                    'source' =>
+                        '918828272570',
+
+                    'destination' =>
+                        $destination,
+
+                    'src.name' =>
+                        'WarrantyMitra',
+
+                    'template' =>
+                        json_encode(
+                            $template,
+                            JSON_UNESCAPED_SLASHES
+                        )
+                ]
+            );
+
+        /*
+        |--------------------------------------------------------------------------
+        | RESPONSE BODY
+        |--------------------------------------------------------------------------
+        */
+
+        $responseBody =
+            $response->json();
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | FAILED RESPONSE
+        |--------------------------------------------------------------------------
+        */
+
+        if (!$response->successful()) {
+
             return response()->json([
-                'success' => true,
-                'message' => 'OTP sent successfully.',
-                'phone_updated' => !empty($oldPhone),
-                'otp' => $otp // remove in production
-            ]);
+
+                'success' => false,
+
+                'message' =>
+                    'Failed to send OTP.',
+
+                'error' =>
+                    $responseBody
+
+            ], 500);
         }
-    
+
+        /*
+        |--------------------------------------------------------------------------
+        | SUCCESS RESPONSE
+        |--------------------------------------------------------------------------
+        */
+
         return response()->json([
+
+            'success' => true,
+
+            'message' =>
+                'OTP sent successfully.',
+
+            'phone_updated' =>
+                !empty($oldPhone),
+
+            'updated_phone' =>
+                $newPhone,
+
+            /*
+            |--------------------------------------------------------------------------
+            | REMOVE OTP IN PRODUCTION
+            |--------------------------------------------------------------------------
+            */
+
+            'otp' =>
+                $otp
+        ]);
+
+    } catch (\Throwable $e) {
+
+      
+
+        return response()->json([
+
             'success' => false,
-            'message' => 'Failed to send OTP.',
-            'error' => $response->json(),
+
+            'message' =>
+                'Failed to send OTP.',
+
+            'error' =>
+                $e->getMessage()
+
         ], 500);
     }
+}
 
-    public function verifyOtp(Request $request)
+   public function verifyOtp(Request $request)
     {
-        // Validation
-        $validator = Validator::make($request->all(), [
-            'contact_phone' => 'required|digits:10',
-            'otp'           => 'required|digits:6'
-        ]);
-    
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => $validator->errors()->first(),
-                'errors'  => $validator->errors()
-            ], 422);
-        }
-    
-        // Retrieve OTP from cache
-        $cachedOtp = Cache::get("otp_{$request->contact_phone}");
-    
-        if ($cachedOtp && $cachedOtp == $request->otp) {
-    
-            // OTP valid - delete OTP (optional one-time use)
-            Cache::forget("otp_{$request->contact_phone}");
-    
-            // Update company verification status
-            Company::where('contact_phone', $request->contact_phone)
-                ->update(['is_wa_verified' => 1]);
-    
-            // Get updated user
-            $user = Company::where('contact_phone', $request->contact_phone)
-                            ->first();
-    
-            return response()->json([
-                'success' => true,
-                'message' => 'OTP verified successfully',
-                'data'    => $user
-            ]);
-        }
-    
+    $validator = Validator::make($request->all(), [
+        'contact_phone' => 'required|digits:10',
+        'otp'           => 'required|digits:6'
+    ]);
+
+    if ($validator->fails()) {
         return response()->json([
             'success' => false,
-            'message' => 'Invalid or expired OTP',
-        ], 401);
+            'message' => $validator->errors()->first(),
+            'errors'  => $validator->errors()
+        ], 422);
     }
+
+    $cachedOtp = Cache::get("otp_{$request->contact_phone}");
+
+    if ($cachedOtp && $cachedOtp == $request->otp) {
+
+        Cache::forget("otp_{$request->contact_phone}");
+
+        // Update company
+        Company::where('contact_phone', $request->contact_phone)
+            ->update(['is_wa_verified' => 1]);
+
+        // Update master
+        OrgUsersMaster::where('phone', $request->contact_phone)
+            ->update([
+                'is_wa_verified' => 1
+            ]);
+
+        $user = Company::where('contact_phone', $request->contact_phone)->first();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'OTP verified successfully',
+            'data'    => $user
+        ]);
+    }
+
+    return response()->json([
+        'success' => false,
+        'message' => 'Invalid or expired OTP',
+    ], 401);
+}
     
     public function sendWhatsAppTemplate($destinationPhoneNumber)
     {
@@ -242,9 +450,9 @@ class WhatsappController extends Controller
             ],
             'form_params' => [
                 'channel'      => 'whatsapp',
-                'source'       => '15557661628',
+                'source'       => '919372011028',
                 'destination'  => $destinationPhoneNumber,
-                'src.name'     => 'GoelectronixWarranty',
+                'src.name'     => 'Goelectronix',
                 'template'     => json_encode([
                     'id'     => 'fe2b2208-cb40-4156-8b5e-b9f94a8f0d97',
                     'params' => []
@@ -307,9 +515,9 @@ class WhatsappController extends Controller
                     ],
                     'form_params' => [
                         'channel' => 'whatsapp',
-                        'source' => '15557661628',
+                        'source' => '919372011028',
                         'destination' => $destination,
-                        'src.name' => 'GoelectronixWarranty',
+                        'src.name' => 'Goelectronix',
 
                         'template' => json_encode([
                             'id' => '7daef5bb-b87c-41e8-a646-b179277da272',
@@ -352,6 +560,127 @@ class WhatsappController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+    
+    public function messages($phone)
+    {
+
+        $messages = CandidateWhatsappMessage::where('phone', $phone)
+
+            ->orderBy('id', 'asc')
+            ->get();
+
+        return response()->json([
+
+            'status' => true,
+            'data' => $messages
+
+        ]);
+
+    }
+
+    public function sendMessageCandidate(Request $request)
+
+    {
+
+        $request->validate([
+
+            'phone' => 'required',
+
+            'message' => 'required'
+
+        ]);
+
+        $phone = preg_replace('/[^0-9]/', '', $request->phone);
+
+        try {
+
+            $payload = [
+
+                'channel' => 'whatsapp',
+
+                'source' => '919372011028',
+
+                'destination' => $phone,
+
+                'src.name' => 'Goelectronix',
+
+                'message' => json_encode([
+
+                    'type' => 'text',
+
+                    'text' => $request->message
+
+                ])
+
+            ];
+
+            $response = Http::asForm()
+
+                ->withHeaders([
+
+                    'apikey' => env('GUPSHUP_API_KEY')
+
+                ])
+
+                ->post(
+
+                    'https://api.gupshup.io/wa/api/v1/msg',
+
+                    $payload
+
+                );
+
+            if (!$response->successful()) {
+
+                return response()->json([
+
+                    'status' => false,
+
+                    'message' => 'Failed to send message',
+
+                    'response' => $response->json()
+
+                ], 500);
+
+            }
+
+            CandidateWhatsappMessage::create([
+
+                'candidate_id' => $request->candidate_id,
+
+                'phone' => $phone,
+
+                'message' => $request->message,
+
+                'direction' => 'sent',
+
+                'message_type' => 'text',
+
+                'status' => 'sent'
+
+            ]);
+
+            return response()->json([
+
+                'status' => true,
+
+                'message' => 'Message sent successfully'
+
+            ]);
+
+        } catch (\Exception $e) {
+
+            return response()->json([
+
+                'status' => false,
+
+                'message' => $e->getMessage()
+
+            ], 500);
+
+        }
+
     }
 }
 

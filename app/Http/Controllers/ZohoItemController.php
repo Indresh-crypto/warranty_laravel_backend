@@ -43,7 +43,7 @@ public function createZohoItem(Request $request)
     }
 
     // ✅ Retrieve org user with Zoho credentials
-    $orgUser = ZohoUser::where('company_id', $request->company_id)
+    $orgUser = ZohoUser::where('company_id', 1)
                       ->whereNotNull('zoho_access_token')
                       ->whereNotNull('zoho_org_id')
                       ->first();
