@@ -10,6 +10,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Cache;
 
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -27,7 +28,7 @@ class OnboardingPaymentJob implements ShouldQueue
 
     public $payload;
 
-    public $tries = 5;
+    public $tries = 3;
 
     public $timeout = 180;
 
@@ -40,30 +41,75 @@ class OnboardingPaymentJob implements ShouldQueue
     {
         /*
         |--------------------------------------------------------------------------
-        | VALIDATION
+        | PAYMENT ID
         |--------------------------------------------------------------------------
         */
 
-        $required = [
-            'company_id',
-            'retailer_id',
-            'amount',
-            'payment_id'
-        ];
+        $paymentId =
+            $this->payload['payment_id'] ?? null;
 
-        foreach ($required as $field) {
+        if (!$paymentId) {
 
-            if (!isset($this->payload[$field])) {
+            Log::error(
+                'ONBOARDING PAYMENT ID MISSING',
+                [
+                    'payload' => $this->payload
+                ]
+            );
 
-                throw new \Exception(
-                    $field . ' missing in payload'
-                );
-            }
+            return;
         }
 
-        DB::beginTransaction();
+        /*
+        |--------------------------------------------------------------------------
+        | CACHE LOCK
+        |--------------------------------------------------------------------------
+        */
+
+        $lock = Cache::lock(
+            'onboarding_payment_' . $paymentId,
+            120
+        );
+
+        if (!$lock->get()) {
+
+            Log::warning(
+                'ONBOARDING PAYMENT LOCKED',
+                [
+                    'payment_id' => $paymentId
+                ]
+            );
+
+            return;
+        }
 
         try {
+
+            /*
+            |--------------------------------------------------------------------------
+            | VALIDATION
+            |--------------------------------------------------------------------------
+            */
+
+            $required = [
+                'company_id',
+                'retailer_id',
+                'amount',
+                'payment_id'
+            ];
+
+            foreach ($required as $field) {
+
+                if (
+                    !isset($this->payload[$field]) ||
+                    $this->payload[$field] === null
+                ) {
+
+                    throw new \Exception(
+                        $field . ' missing in payload'
+                    );
+                }
+            }
 
             /*
             |--------------------------------------------------------------------------
@@ -71,14 +117,10 @@ class OnboardingPaymentJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
-            $paymentId =
-                $this->payload['payment_id'];
-
             $amount =
                 (float) $this->payload['amount'];
 
-            $companyId =1;
-                
+            $companyId = 1;
 
             $retailerId =
                 $this->payload['retailer_id'];
@@ -86,7 +128,9 @@ class OnboardingPaymentJob implements ShouldQueue
             Log::info(
                 'ONBOARDING PAYMENT JOB STARTED',
                 [
-                    'payload' => $this->payload
+                    'payment_id' => $paymentId,
+                    'retailer_id' => $retailerId,
+                    'amount' => $amount
                 ]
             );
 
@@ -96,24 +140,30 @@ class OnboardingPaymentJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
-            $exists = AdvancePayment::where(
+            $existingPayment = AdvancePayment::where(
                 'payment_id',
                 $paymentId
-            )->exists();
+            )->first();
 
-            if ($exists) {
+            if ($existingPayment) {
 
                 Log::warning(
-                    'ONBOARDING PAYMENT ALREADY PROCESSED',
+                    'ONBOARDING PAYMENT ALREADY EXISTS',
                     [
                         'payment_id' => $paymentId
                     ]
                 );
 
-                DB::rollBack();
-
                 return;
             }
+
+            /*
+            |--------------------------------------------------------------------------
+            | START DB TRANSACTION
+            |--------------------------------------------------------------------------
+            */
+
+            DB::beginTransaction();
 
             /*
             |--------------------------------------------------------------------------
@@ -121,7 +171,6 @@ class OnboardingPaymentJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
-            $companyId = 1;
             $company = Company::find($companyId);
 
             if (
@@ -137,19 +186,107 @@ class OnboardingPaymentJob implements ShouldQueue
 
             /*
             |--------------------------------------------------------------------------
-            | LOAD RETAILER
+            | LOAD RETAILER WITH DB LOCK
             |--------------------------------------------------------------------------
             */
 
-            $retailer = Company::find($retailerId);
+            $retailer = Company::where(
+                'id',
+                $retailerId
+            )
+            ->lockForUpdate()
+            ->first();
 
-            if (
-                !$retailer ||
-                !$retailer->zoho_id
-            ) {
+            if (!$retailer) {
 
                 throw new \Exception(
-                    'Onboarding Retailer Zoho contact missing'
+                    'Retailer not found'
+                );
+            }
+
+            if (!$retailer->zoho_id) {
+
+                throw new \Exception(
+                    'Retailer Zoho contact missing'
+                );
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | HTTP CLIENT
+            |--------------------------------------------------------------------------
+            */
+
+            $client = new Client([
+
+                'timeout' => 60,
+
+                'connect_timeout' => 20,
+
+                'http_errors' => true
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | CHECK EXISTING PAYMENT IN ZOHO
+            |--------------------------------------------------------------------------
+            */
+
+            $existingZohoPayment = null;
+
+            try {
+
+                $searchResponse = $client->get(
+                    'https://www.zohoapis.in/books/v3/customerpayments',
+                    [
+
+                        'headers' => [
+
+                            'Authorization' =>
+                                'Zoho-oauthtoken ' .
+                                $company->zoho_access_token
+                        ],
+
+                        'query' => [
+
+                            'organization_id' =>
+                                $company->zoho_org_id,
+
+                            'reference_number' =>
+                                $paymentId
+                        ]
+                    ]
+                );
+
+                $searchBody = json_decode(
+                    $searchResponse->getBody(),
+                    true
+                );
+
+                if (
+                    isset($searchBody['customerpayments']) &&
+                    count($searchBody['customerpayments']) > 0
+                ) {
+
+                    $existingZohoPayment =
+                        $searchBody['customerpayments'][0];
+
+                    Log::info(
+                        'ZOHO PAYMENT ALREADY EXISTS',
+                        [
+                            'payment_id' => $paymentId
+                        ]
+                    );
+                }
+
+            } catch (\Throwable $e) {
+
+                Log::warning(
+                    'ZOHO PAYMENT SEARCH FAILED',
+                    [
+                        'payment_id' => $paymentId,
+                        'message' => $e->getMessage()
+                    ]
                 );
             }
 
@@ -159,115 +296,194 @@ class OnboardingPaymentJob implements ShouldQueue
             |--------------------------------------------------------------------------
             */
 
-            $paymentData = [
+            if (!$existingZohoPayment) {
 
-                'location_id' =>
-                   $company->location_id,
+                $paymentData = [
+                    
+                    'is_advance_payment' =>true,
+                    
+                    'location_id' =>
+                        $company->location_id,
 
-                'location_name' =>
-                    'Warranty Mitra',
+                    'location_name' =>
+                        'Warranty Mitra',
 
-                'customer_id' =>
-                    $retailer->zoho_id,
+                    'customer_id' =>
+                        $retailer->zoho_id,
 
-                'amount' =>
-                    $amount,
+                    'amount' =>
+                        $amount,
 
-                'reference_number' =>
-                    $paymentId,
+                    'reference_number' =>
+                        $paymentId,
 
-                'payment_mode' =>
-                    'RZ WM',
+                    'payment_mode' =>
+                        'RZ WM',
 
-                'description' =>
-                    'Onboarding recharge',
+                    'description' =>
+                        'Onboarding recharge',
 
-                'invoices' => []
-            ];
+                    'invoices' => []
+                ];
 
-            $client = new Client([
-                'timeout' => 60,
-                'connect_timeout' => 20
-            ]);
-
-            $response = $client->post(
-                'https://www.zohoapis.in/books/v3/customerpayments',
-                [
-
-                    'headers' => [
-
-                        'Authorization' =>
-                            'Zoho-oauthtoken ' .
-                            $company->zoho_access_token
-                    ],
-
-                    'query' => [
-
-                        'organization_id' =>
-                            $company->zoho_org_id
-                    ],
-
-                    'json' => $paymentData
-                ]
-            );
-
-            $body = json_decode(
-                $response->getBody(),
-                true
-            );
-
-            if (!isset($body['payment'])) {
-
-                throw new \Exception(
-                    'Zoho onboarding payment creation failed'
+                Log::info(
+                    'CREATING ZOHO PAYMENT',
+                    [
+                        'payment_id' => $paymentId,
+                        'payload' => $paymentData
+                    ]
                 );
-            }
 
-            $zohoPayment = $body['payment'];
+                $response = $client->post(
+                    'https://www.zohoapis.in/books/v3/customerpayments',
+                    [
+
+                        'headers' => [
+
+                            'Authorization' =>
+                                'Zoho-oauthtoken ' .
+                                $company->zoho_access_token
+                        ],
+
+                        'query' => [
+
+                            'organization_id' =>
+                                $company->zoho_org_id
+                        ],
+
+                        'json' => $paymentData
+                    ]
+                );
+
+                $body = json_decode(
+                    $response->getBody(),
+                    true
+                );
+
+                Log::info(
+                    'ZOHO PAYMENT RESPONSE',
+                    [
+                        'payment_id' => $paymentId,
+                        'response' => $body
+                    ]
+                );
+
+                if (!isset($body['payment'])) {
+
+                    throw new \Exception(
+                        'Zoho payment creation failed'
+                    );
+                }
+
+                $zohoPayment = $body['payment'];
+
+            } else {
+
+                $zohoPayment =
+                    $existingZohoPayment;
+            }
 
             /*
             |--------------------------------------------------------------------------
-            | UPDATE WALLET BALANCE
+            | PREVENT DOUBLE WALLET UPDATE
             |--------------------------------------------------------------------------
             */
 
-            $currentWalletBalance =
-                (float) ($retailer->wallet_balance ?? 0);
+            $existingWalletUpdate =
+                WarrantyFlowLog::where(
+                    'payment_id',
+                    $paymentId
+                )
+                ->where(
+                    'step',
+                    'ONBOARDING_WALLET_UPDATED'
+                )
+                ->exists();
 
-            $newWalletBalance =
-                $currentWalletBalance + $amount;
+            if (!$existingWalletUpdate) {
 
-            $retailer->wallet_balance =
-                $newWalletBalance;
+                $oldWallet =
+                    (float) ($retailer->wallet_balance ?? 0);
 
-            $retailer->save();
+                $newWallet =
+                    $oldWallet + $amount;
+
+                $retailer->wallet_balance =
+                    $newWallet;
+
+                /*
+                |--------------------------------------------------------------------------
+                | PAYMENT SUCCESS STATUS
+                |--------------------------------------------------------------------------
+                */
+
+                $retailer->is_payment_success = 1;
+
+                $retailer->last_update_balance_at =
+                    now();
+
+                $retailer->save();
+
+                WarrantyFlowLog::create([
+
+                    'payment_id' =>
+                        $paymentId,
+
+                    'step' =>
+                        'ONBOARDING_WALLET_UPDATED',
+
+                    'status' =>
+                        1,
+
+                    'response_data' =>
+                        json_encode([
+
+                            'old_wallet_balance' =>
+                                $oldWallet,
+
+                            'added_amount' =>
+                                $amount,
+
+                            'updated_wallet_balance' =>
+                                $newWallet
+                        ])
+                ]);
+
+                Log::info(
+                    'RETAILER WALLET UPDATED',
+                    [
+
+                        'retailer_id' =>
+                            $retailer->id,
+
+                        'old_wallet_balance' =>
+                            $oldWallet,
+
+                        'added_amount' =>
+                            $amount,
+
+                        'updated_wallet_balance' =>
+                            $newWallet
+                    ]
+                );
+
+            } else {
+
+                Log::warning(
+                    'WALLET ALREADY UPDATED',
+                    [
+                        'payment_id' => $paymentId
+                    ]
+                );
+            }
 
             /*
             |--------------------------------------------------------------------------
-            | IMPORTANT
-            | RELOAD FRESH DATA FROM DB
+            | REFRESH RETAILER
             |--------------------------------------------------------------------------
             */
 
             $retailer->refresh();
-
-            Log::info(
-                'RETAILER WALLET UPDATED',
-                [
-
-                    'retailer_id' =>
-                        $retailer->id,
-
-                    'old_wallet_balance' =>
-                        $currentWalletBalance,
-
-                    'added_amount' =>
-                        $amount,
-
-                    'updated_wallet_balance' =>
-                        $retailer->wallet_balance
-                ]
-            );
 
             /*
             |--------------------------------------------------------------------------
@@ -292,7 +508,7 @@ class OnboardingPaymentJob implements ShouldQueue
 
             /*
             |--------------------------------------------------------------------------
-            | FLOW LOG
+            | FLOW LOG SUCCESS
             |--------------------------------------------------------------------------
             */
 
@@ -302,18 +518,29 @@ class OnboardingPaymentJob implements ShouldQueue
                     $paymentId,
 
                 'step' =>
-                    'ONBOARDING_PAYMENT_CREATED',
+                    'ONBOARDING_PAYMENT_SUCCESS',
 
                 'status' =>
                     1,
 
                 'response_data' =>
-                    json_encode($zohoPayment)
+                    json_encode([
+
+                        'zoho_payment_id' =>
+                            $zohoPayment['payment_id']
+                            ?? null,
+
+                        'wallet_balance' =>
+                            $retailer->wallet_balance,
+
+                        'is_payment_success' =>
+                            $retailer->is_payment_success
+                    ])
             ]);
 
             /*
             |--------------------------------------------------------------------------
-            | COMMIT DB
+            | COMMIT
             |--------------------------------------------------------------------------
             */
 
@@ -326,12 +553,8 @@ class OnboardingPaymentJob implements ShouldQueue
                     'payment_id' =>
                         $paymentId,
 
-                    'zoho_payment_id' =>
-                        $zohoPayment['payment_id']
-                        ?? null,
-
-                    'amount' =>
-                        $amount,
+                    'retailer_id' =>
+                        $retailer->id,
 
                     'wallet_balance' =>
                         $retailer->wallet_balance
@@ -346,107 +569,42 @@ class OnboardingPaymentJob implements ShouldQueue
 
             try {
 
-                Log::info(
-                    'WHATSAPP PROCESS STARTED'
-                );
-
-                $razorpayId = $paymentId;
-
                 $whatsappService =
                     app(WhatsappService::class);
 
-                /*
-                |--------------------------------------------------------------------------
-                | PAYMENT SUCCESS WHATSAPP
-                |--------------------------------------------------------------------------
-                */
+                $whatsappService
+                    ->paymentSuccessWhatsapp(
+                        $retailer,
+                        $zohoPayment,
+                        $amount,
+                        $paymentId
+                    );
 
-                $paymentWhatsappResponse =
-                    $whatsappService
-                        ->paymentSuccessWhatsapp(
-                            $retailer,
-                            $zohoPayment,
-                            $amount,
-                            $razorpayId
-                        );
+                $whatsappService
+                    ->sendPaymentReceiptWhatsapp(
 
-                Log::info(
-                    'PAYMENT WHATSAPP RESPONSE',
-                    [
-                        'response' =>
-                            $paymentWhatsappResponse
-                    ]
-                );
+                        $retailer,
 
-                /*
-                |--------------------------------------------------------------------------
-                | REFRESH AGAIN BEFORE RECEIPT
-                |--------------------------------------------------------------------------
-                */
+                        $retailer->company_code
+                            ?? 'ARP001',
 
-                $retailer->refresh();
+                        $zohoPayment['payment_id']
+                            ?? $paymentId,
 
-                /*
-                |--------------------------------------------------------------------------
-                | PAYMENT RECEIPT WHATSAPP
-                |--------------------------------------------------------------------------
-                */
+                        $amount,
 
-                $receiptWhatsappResponse =
-                    $whatsappService
-                        ->sendPaymentReceiptWhatsapp(
+                        now()->format('d-m-Y'),
 
-                            $retailer,
-
-                            // ARP ID
-                            $retailer->company_code
-                                ?? 'ARP001',
-
-                            // RECEIPT ID
-                            $zohoPayment['payment_id']
-                                ?? $paymentId,
-
-                            // AMOUNT
-                            $amount,
-
-                            // DATE
-                            now()->format('d-m-Y'),
-
-                            // UPDATED WALLET BALANCE
-                            (float) $retailer->wallet_balance
-                        );
-
-                Log::info(
-                    'PAYMENT RECEIPT WHATSAPP RESPONSE',
-                    [
-                        'wallet_balance' =>
-                            $retailer->wallet_balance,
-
-                        'response' =>
-                            $receiptWhatsappResponse
-                    ]
-                );
+                        (float) $retailer->wallet_balance
+                    );
 
             } catch (\Throwable $e) {
 
                 Log::error(
-                    'ONBOARDING PAYMENT WHATSAPP FAILED',
+                    'WHATSAPP FAILED',
                     [
-
-                        'retailer_id' =>
-                            $retailer->id ?? null,
-
-                        'message' =>
-                            $e->getMessage(),
-
-                        'line' =>
-                            $e->getLine(),
-
-                        'file' =>
-                            $e->getFile(),
-
-                        'trace' =>
-                            $e->getTraceAsString()
+                        'payment_id' => $paymentId,
+                        'message' => $e->getMessage()
                     ]
                 );
             }
@@ -475,7 +633,6 @@ class OnboardingPaymentJob implements ShouldQueue
                     Log::info(
                         'PAYMENT EMAIL QUEUED',
                         [
-
                             'retailer_id' =>
                                 $retailer->id,
 
@@ -488,14 +645,10 @@ class OnboardingPaymentJob implements ShouldQueue
             } catch (\Throwable $e) {
 
                 Log::error(
-                    'PAYMENT EMAIL FAILED',
+                    'EMAIL FAILED',
                     [
-
-                        'retailer_id' =>
-                            $retailer->id ?? null,
-
-                        'message' =>
-                            $e->getMessage()
+                        'payment_id' => $paymentId,
+                        'message' => $e->getMessage()
                     ]
                 );
             }
@@ -507,6 +660,9 @@ class OnboardingPaymentJob implements ShouldQueue
             Log::error(
                 'ONBOARDING PAYMENT FAILED',
                 [
+
+                    'payment_id' =>
+                        $paymentId,
 
                     'message' =>
                         $e->getMessage(),
@@ -522,23 +678,51 @@ class OnboardingPaymentJob implements ShouldQueue
                 ]
             );
 
-            WarrantyFlowLog::create([
+            try {
 
-                'payment_id' =>
-                    $this->payload['payment_id']
-                    ?? null,
+                WarrantyFlowLog::create([
 
-                'step' =>
-                    'ONBOARDING_PAYMENT_FAILED',
+                    'payment_id' =>
+                        $paymentId,
 
-                'status' =>
-                    0,
+                    'step' =>
+                        'ONBOARDING_PAYMENT_FAILED',
 
-                'error_message' =>
-                    $e->getMessage()
-            ]);
+                    'status' =>
+                        0,
+
+                    'error_message' =>
+                        $e->getMessage()
+                ]);
+
+            } catch (\Throwable $logError) {
+
+                Log::error(
+                    'FLOW LOG FAILED',
+                    [
+                        'message' =>
+                            $logError->getMessage()
+                    ]
+                );
+            }
 
             throw $e;
+
+        } finally {
+
+            try {
+
+                optional($lock)->release();
+
+            } catch (\Throwable $e) {
+
+                Log::warning(
+                    'LOCK RELEASE FAILED',
+                    [
+                        'payment_id' => $paymentId
+                    ]
+                );
+            }
         }
     }
 }

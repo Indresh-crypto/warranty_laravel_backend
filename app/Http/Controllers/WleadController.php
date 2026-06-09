@@ -25,6 +25,9 @@ use Illuminate\Support\Facades\Mail;
 use App\Jobs\SendCompanyCreatedWhatsapp;
 use App\Jobs\SendAgentPendingWhatsapp;
 use DB;
+
+use Carbon\Carbon;
+
 class WleadController extends Controller
 {
 
@@ -915,142 +918,357 @@ class WleadController extends Controller
     /**
      * Get list of all users
      */
-   public function index(Request $request)
-   {
-    // ---------------------------------
-    // BASE QUERY
-    // ---------------------------------
-    $baseQuery = WLead::query();
+    public function index(Request $request)
+    {
 
-    // ---------------------------------
-    // BASIC FILTERS
-    // ---------------------------------
-    if ($request->created_by_id) {
-        $baseQuery->where('created_by_id', $request->created_by_id);
-    }
+        $baseQuery = WLead::with([
+        
+            'remarks.followupUser:id,first_name,last_name,official_phone,official_email,photo_url,employee_id,position',
+        
+            'remarks.createdUser:id,first_name,last_name'
+        
+        ]);
 
-    if ($request->company_id) {
-        $baseQuery->where('company_id', $request->company_id);
-    }
-
-    if ($request->lead_type) {
-        $baseQuery->where('lead_type', $request->lead_type);
-    }
-
-
-    if ($request->manager_id) {
-        $baseQuery->where('manager_id', $request->manager_id);
-    }
     
-     if ($request->agent_id) {
-        $baseQuery->where('agent_id', $request->agent_id);
-    }
-
-    // ---------------------------------
-    // STATUS FILTER (single value)
-    // ---------------------------------
-    if ($request->status) {
-        $baseQuery->where('status', $request->status);
-    }
     
-    if ($request->form_ref) {
-        $baseQuery->where('form_ref', $request->form_ref);
+        // ---------------------------------
+        // BASIC FILTERS
+        // ---------------------------------
+    
+        if ($request->created_by_id) {
+            $baseQuery->where('created_by_id', $request->created_by_id);
+        }
+    
+        if ($request->company_id) {
+            $baseQuery->where('company_id', $request->company_id);
+        }
+    
+        if ($request->lead_type) {
+            $baseQuery->where('lead_type', $request->lead_type);
+        }
+    
+        if ($request->manager_id) {
+            $baseQuery->where('manager_id', $request->manager_id);
+        }
+    
+        if ($request->agent_id) {
+            $baseQuery->where('agent_id', $request->agent_id);
+        }
+    
+        // ---------------------------------
+        // STATUS FILTER
+        // ---------------------------------
+    
+        if ($request->status) {
+            $baseQuery->where('status', $request->status);
+        }
+    
+        // ---------------------------------
+        // FORM REF FILTER
+        // ---------------------------------
+    
+        if ($request->form_ref) {
+            $baseQuery->where('form_ref', $request->form_ref);
+        }
+    
+        // ---------------------------------
+        // FOLLOWUP FILTERS
+        // ---------------------------------
+    
+        // Filter by follow up user
+        if ($request->follow_up_by) {
+            $baseQuery->where('follow_up_by', $request->follow_up_by);
+        }
+    
+        // Exact followup date
+        if ($request->followup_date) {
+            $baseQuery->whereDate('followup_date', $request->followup_date);
+        }
+    
+        // Followup date range
+        if ($request->followup_from_date && $request->followup_to_date) {
+    
+            $baseQuery->whereBetween('followup_date', [
+                $request->followup_from_date . ' 00:00:00',
+                $request->followup_to_date . ' 23:59:59'
+            ]);
+        }
+    
+        // Today followups
+        if ($request->today_followup == 1) {
+            $baseQuery->whereDate('followup_date', now()->toDateString());
+        }
+    
+        // Pending followups
+        if ($request->pending_followup == 1) {
+    
+            $baseQuery->whereDate(
+                'followup_date',
+                '<',
+                now()->toDateString()
+            );
+        }
+    
+        // Upcoming followups
+        if ($request->upcoming_followup == 1) {
+    
+            $baseQuery->whereDate(
+                'followup_date',
+                '>',
+                now()->toDateString()
+            );
+        }
+    
+        // ---------------------------------
+        // SEARCH FILTER
+        // ---------------------------------
+    
+        if ($request->search) {
+    
+            $search = $request->search;
+    
+            $baseQuery->where(function ($q) use ($search) {
+    
+                $q->where('name', 'LIKE', "%{$search}%")
+                    ->orWhere('owner_name', 'LIKE', "%{$search}%")
+                    ->orWhere('phone', 'LIKE', "%{$search}%")
+                    ->orWhere('email', 'LIKE', "%{$search}%")
+                    ->orWhere('lead_code', 'LIKE', "%{$search}%");
+            });
+        }
+    
+        // ---------------------------------
+        // LOCATION FILTERS
+        // ---------------------------------
+    
+        if ($request->state) {
+    
+            $states = array_map(
+                'trim',
+                explode(',', strtoupper($request->state))
+            );
+    
+            $baseQuery->whereIn('state', $states);
+        }
+    
+        if ($request->district) {
+    
+            $districts = array_map(
+                'trim',
+                explode(',', strtoupper($request->district))
+            );
+    
+            $baseQuery->whereIn('district', $districts);
+        }
+    
+        if ($request->pincode) {
+    
+            $pincodes = array_map(
+                'trim',
+                explode(',', $request->pincode)
+            );
+    
+            $baseQuery->whereIn('pincode', $pincodes);
+        }
+    
+        // ---------------------------------
+        // CREATED DATE FILTER
+        // ---------------------------------
+    
+        if ($request->from_date && $request->to_date) {
+    
+            $baseQuery->whereBetween('created_at', [
+                $request->from_date . ' 00:00:00',
+                $request->to_date . ' 23:59:59'
+            ]);
+        }
+        
+      if ($request->tomorrow_followup == 1) {
+
+        $baseQuery->whereDate(
+    
+            'followup_date',
+    
+            Carbon::tomorrow()->toDateString()
+    
+        );
+    
     }
 
-    // ---------------------------------
-    // LOCATION FILTERS (single or comma-separated)
-    // ---------------------------------
-    if ($request->state) {
-        $states = array_map('trim', explode(',', strtoupper($request->state)));
-        $baseQuery->whereIn('state', $states);
-    }
+    
+        // ---------------------------------
+        // SUMMARY
+        // ---------------------------------
+    
+        $totalLeads = (clone $baseQuery)->count();
+    
+        $newCount = (clone $baseQuery)
+            ->where('status', 'new')
+            ->count();
+    
+        $inProcessCount = (clone $baseQuery)
+            ->where('status', 'in process')
+            ->count();
+    
+        $wonCount = (clone $baseQuery)
+            ->where('status', 'won')
+            ->count();
+    
+        $lostCount = (clone $baseQuery)
+            ->where('status', 'lost')
+            ->count();
+    
+        $statusAmounts = [
+    
+            'new' => (clone $baseQuery)
+                ->where('status', 'new')
+                ->sum('lead_amount'),
+    
+            'in_process' => (clone $baseQuery)
+                ->where('status', 'in process')
+                ->sum('lead_amount'),
+    
+            'won' => (clone $baseQuery)
+                ->where('status', 'won')
+                ->sum('lead_amount'),
+    
+            'lost' => (clone $baseQuery)
+                ->where('status', 'lost')
+                ->sum('lead_amount'),
+        ];
+    
+        $leadTypeCounts = [
+    
+            'type_2' => (clone $baseQuery)
+                ->where('lead_type', 2)
+                ->count(),
+    
+            'type_4' => (clone $baseQuery)
+                ->where('lead_type', 4)
+                ->count(),
+    
+            'type_5' => (clone $baseQuery)
+                ->where('lead_type', 5)
+                ->count(),
+        ];
+    
+        $todayFollowups = (clone $baseQuery)
+            ->whereDate('followup_date', now()->toDateString())
+            ->count();
+    
+        $pendingFollowups = (clone $baseQuery)
+            ->whereDate('followup_date', '<', now()->toDateString())
+            ->count();
+    
+        $upcomingFollowups = (clone $baseQuery)
+            ->whereDate('followup_date', '>', now()->toDateString())
+            ->count();
+            
+        $tomorrowFollowups = (clone $baseQuery)
+        
+            ->whereDate(
+        
+                'followup_date',
+        
+                now()->addDay()->toDateString()
+        
+            )
+        
+            ->count();
+    
+        $totalLeadAmount = (clone $baseQuery)
+            ->sum('lead_amount');
+    
+        $conversionRate = $totalLeads > 0
+            ? round(($wonCount / $totalLeads) * 100, 2)
+            : 0;
+    
+        // ---------------------------------
+        // SORTING
+        // ---------------------------------
+    
+        $sortBy = $request->sort_by ?? 'id';
+    
+        $sortOrder = $request->sort_order ?? 'desc';
+    
+        $allowedSorts = [
+            'id',
+            'created_at',
+            'followup_date',
+            'lead_amount',
+            'name',
+            'status'
+        ];
+    
+        if (!in_array($sortBy, $allowedSorts)) {
+            $sortBy = 'id';
+        }
+    
+        // ---------------------------------
+        // PAGINATION
+        // ---------------------------------
+    
+        $perPage = $request->per_page ?? 10;
+    
+        $leads = (clone $baseQuery)
+            ->orderBy($sortBy, $sortOrder)
+            ->paginate($perPage);
+    
+        // ---------------------------------
+        // RESPONSE
+        // ---------------------------------
+    
+        return response()->json([
+    
+            'status' => true,
+    
+            'message' => 'Lead list fetched successfully',
+    
+            'summary' => [
+    
+                'total_leads' => $totalLeads,
+    
+                'status_counts' => [
+                    'new' => $newCount,
+                    'in_process' => $inProcessCount,
+                    'won' => $wonCount,
+                    'lost' => $lostCount,
+                ],
+    
+               'followup_counts' => [
 
-    if ($request->district) {
-        $districts = array_map('trim', explode(',', strtoupper($request->district)));
-        $baseQuery->whereIn('district', $districts);
-    }
-
-    if ($request->pincode) {
-        $pincodes = array_map('trim', explode(',', $request->pincode));
-        $baseQuery->whereIn('pincode', $pincodes);
-    }
-
-    // ---------------------------------
-    // DATE FILTER
-    // ---------------------------------
-    if ($request->from_date && $request->to_date) {
-        $baseQuery->whereBetween('created_at', [
-            $request->from_date . ' 00:00:00',
-            $request->to_date . ' 23:59:59'
+                    'today' => $todayFollowups,
+                
+                    'tomorrow' => $tomorrowFollowups,
+                
+                    'pending' => $pendingFollowups,
+                
+                    'upcoming' => $upcomingFollowups,
+                
+                ],
+                'status_amounts' => $statusAmounts,
+    
+                'lead_type_counts' => $leadTypeCounts,
+    
+                'total_lead_amount' => $totalLeadAmount,
+    
+                'conversion_rate' => $conversionRate . '%'
+            ],
+    
+            'pagination' => [
+    
+                'current_page' => $leads->currentPage(),
+    
+                'per_page' => $leads->perPage(),
+    
+                'last_page' => $leads->lastPage(),
+    
+                'total' => $leads->total()
+            ],
+    
+            'data' => $leads->items()
         ]);
     }
-
-    // ---------------------------------
-    // SUMMARY (FILTERED, NOT PAGINATED)
-    // ---------------------------------
-    $totalLeads = (clone $baseQuery)->count();
-
-    $newCount       = (clone $baseQuery)->where('status', 'new')->count();
-    $inProcessCount = (clone $baseQuery)->where('status', 'in process')->count();
-    $wonCount       = (clone $baseQuery)->where('status', 'won')->count();
-    $lostCount      = (clone $baseQuery)->where('status', 'lost')->count();
-
-    $statusAmounts = [
-        'new'        => (clone $baseQuery)->where('status', 'new')->sum('lead_amount'),
-        'in_process' => (clone $baseQuery)->where('status', 'in process')->sum('lead_amount'),
-        'won'        => (clone $baseQuery)->where('status', 'won')->sum('lead_amount'),
-        'lost'       => (clone $baseQuery)->where('status', 'lost')->sum('lead_amount'),
-    ];
-
-    $leadTypeCounts = [
-        'type_2' => (clone $baseQuery)->where('lead_type', 2)->count(),
-        'type_4' => (clone $baseQuery)->where('lead_type', 4)->count(),
-        'type_5' => (clone $baseQuery)->where('lead_type', 5)->count(),
-    ];
-
-    $totalLeadAmount = (clone $baseQuery)->sum('lead_amount');
-
-    $conversionRate = $totalLeads > 0
-        ? round(($wonCount / $totalLeads) * 100, 2)
-        : 0;
-
-    // ---------------------------------
-    // PAGINATION
-    // ---------------------------------
-    $perPage = $request->per_page ?? 10;
-
-    $leads = (clone $baseQuery)
-        ->orderBy('id', 'desc')
-        ->paginate($perPage);
-
-    // ---------------------------------
-    // RESPONSE
-    // ---------------------------------
-    return response()->json([
-        'status'  => true,
-        'message' => 'Lead list fetched successfully',
-        'summary' => [
-            'total_leads'       => $totalLeads,
-            'status_counts'     => [
-                'new'        => $newCount,
-                'in_process' => $inProcessCount,
-                'won'        => $wonCount,
-                'lost'       => $lostCount,
-            ],
-            'status_amounts'    => $statusAmounts,
-            'lead_type_counts'  => $leadTypeCounts,
-            'total_lead_amount' => $totalLeadAmount,
-            'conversion_rate'   => $conversionRate . '%'
-        ],
-        'pagination' => [
-            'current_page' => $leads->currentPage(),
-            'per_page'     => $leads->perPage(),
-            'last_page'    => $leads->lastPage(),
-            'total'        => $leads->total()
-        ],
-        'data' => $leads->items()
-    ]);
-}
 
 
 public function updateStatus(Request $request, $id)

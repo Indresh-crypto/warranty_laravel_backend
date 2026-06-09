@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>GoElectronix Retailer Agreement</title>
+<title>Warranty Mitra ARP Agreement</title>
 <style>
   body{margin:0;padding:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#333}
   .container{max-width:600px;margin:auto;background:#ffffff}
@@ -28,7 +28,7 @@
     
 
 <div class="header">
-<img src="https://retailer.goelectronix.com/icons/goelectronix-logo.png" alt="GoElectronix Logo" class="logo" />
+<img src="https://zoho.goelectronix.in/storage/logo.png" alt="Warranty Mitra logo" class="logo" />
 </div>
 
 <div class="content">
@@ -37,9 +37,9 @@
 
 <p>Hello <strong>{{ $Retailer_Name }}</strong>,</p>
 
-<p>Welcome to <strong>GoElectronix Technologies Pvt. Ltd.</strong></p>
+<p>Welcome to <strong>Warranty Mitra</strong></p>
 
-<p>We are pleased to confirm that your retailer account has been successfully onboarded into the GoElectronix partner network.</p>
+<p>We are pleased to confirm that your retailer account has been successfully onboarded into the Warranty Mitra partner network.</p>
 
 <div class="info-box">
 <strong>Retailer Details</strong><br/><br/>
@@ -49,21 +49,21 @@ Retailer Phone: {{ $Retailer_Phone }}<br/>
 Onboarded Date: {{ $Onboard_Date }}
 </div>
 
-<p>You can login to the GoElectronix Partner Portal using the link below:</p>
+<p>You can login to the Warranty Mitra Partner Portal using the link below:</p>
 
 <a class="btn" href="{{ config('app.url_front') }}">Login to Partner Portal</a>
 <p style="margin-top:25px">If you need any assistance, our support team is always available to help you.</p>
 
 <p>
 Support Phone: +918828272570<br/>
-Support Email: hello@goelectronix.com
+Support Email: info@warrantymitra.com
 </p>
 
 <p>We look forward to a successful partnership.</p>
 
 <p>
 Best Regards,<br/>
-<strong>GoElectronix Partner Support Team</strong>
+<strong>Warranty Mitra Team</strong>
 </p>
 
 </div>

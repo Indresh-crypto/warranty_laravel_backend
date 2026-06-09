@@ -1209,77 +1209,242 @@ class ZohoInvoiceController extends Controller
         }
     }
         
-   public function getInvoiceDetails(Request $request)
-   {
+  public function getInvoiceDetails(Request $request)
+  {
     $validator = Validator::make($request->all(), [
+
         'invoice_id' => 'required|string'
     ]);
 
     if ($validator->fails()) {
+
         return response()->json([
+
             'errors' => $validator->errors()
+
         ], 422);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | FIND DEVICE
+    |--------------------------------------------------------------------------
+    */
+
     $query = WDevice::query();
 
-    // Filter by invoice_id
-    $query->where('invoice_id', $request->invoice_id);
+    $query->where(
+        'invoice_id',
+        $request->invoice_id
+    );
 
-    // Optional filter: company
     if ($request->company_id) {
-        $query->where('company_id', $request->company_id);
+
+        $query->where(
+            'company_id',
+            $request->company_id
+        );
     }
 
-    // Optional filter: retailer
     if ($request->retailer_id) {
-        $query->where('retailer_id', $request->retailer_id);
+
+        $query->where(
+            'retailer_id',
+            $request->retailer_id
+        );
     }
 
     $device = $query->first();
 
     if (!$device) {
+
         return response()->json([
+
             'status' => false,
+
             'message' => 'Invoice not found'
+
         ], 404);
     }
 
-    $zoho = json_decode($device->invoice_json, true);
+    /*
+    |--------------------------------------------------------------------------
+    | FETCH LATEST FROM ZOHO
+    |--------------------------------------------------------------------------
+    */
 
-    // Adjust partially_paid logic
-    if (
-        $device->invoice_status === 'partially_paid' &&
-        !empty($zoho['due_date']) &&
-        Carbon::parse($zoho['due_date'])->isFuture()
-    ) {
-        $device->invoice_status = 'sent';
+    try {
+
+        $orgUser = Company::find(1);
+
+        if (
+            !$orgUser ||
+            !$orgUser->zoho_access_token ||
+            !$orgUser->zoho_org_id
+        ) {
+
+            throw new \Exception(
+                'Zoho credentials missing'
+            );
+        }
+
+        $zohoResponse = $this->zohoGetRequest(
+
+            "https://www.zohoapis.in/books/v3/invoices/{$device->invoice_id}",
+
+            $orgUser
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | UPDATE LOCAL DB
+        |--------------------------------------------------------------------------
+        */
+
+        if (!empty($zohoResponse['invoice'])) {
+
+            $zohoInvoice =
+                $zohoResponse['invoice'];
+
+            $device->invoice_json =
+                json_encode($zohoInvoice);
+
+            $device->invoice_status =
+                $zohoInvoice['status']
+                ?? $device->invoice_status;
+
+            $device->save();
+        }
+
+    } catch (\Throwable $e) {
+
+        \Log::error(
+
+            'ZOHO INVOICE FETCH FAILED',
+
+            [
+
+                'invoice_id' =>
+                    $device->invoice_id,
+
+                'message' =>
+                    $e->getMessage()
+            ]
+        );
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | FRESH JSON
+    |--------------------------------------------------------------------------
+    */
+
+    $zoho = json_decode(
+        $device->invoice_json,
+        true
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | STATUS OVERRIDE
+    |--------------------------------------------------------------------------
+    */
+
+    $invoiceStatus =
+        $device->invoice_status;
+
+    if (
+
+        $invoiceStatus === 'partially_paid'
+
+        &&
+
+        !empty($zoho['due_date'])
+
+        &&
+
+        Carbon::parse(
+            $zoho['due_date']
+        )->isFuture()
+    ) {
+
+        $invoiceStatus = 'sent';
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESPONSE
+    |--------------------------------------------------------------------------
+    */
+
     return response()->json([
+
         'status' => true,
+
         'data' => [
-            'device_id'        => $device->id,
-            'invoice_id'       => $device->invoice_id,
-            'invoice_number'   => $zoho['invoice_number'] ?? null,
-            'invoice_status'   => $device->invoice_status,
-            'invoice_date'     => $zoho['date'] ?? null,
-            'due_date'         => $zoho['due_date'] ?? null,
-            'invoice_amount'   => $zoho['total'] ?? null,
-            'balance_amount'   => $zoho['balance'] ?? null,
-            'invoice_url'      => $zoho['invoice_url'] ?? null,
 
-            // Device Info
-            'imei1'            => $device->imei1,
-            'product_name'     => $device->product_name,
-            'customer_id'      => $device->w_customer_id,
-            'retailer_id'      => $device->retailer_id,
-            'company_id'       => $device->company_id,
+            'device_id' =>
+                $device->id,
 
-            'created_at'       => $device->created_at,
-            'updated_at'       => $device->updated_at,
+            'invoice_id' =>
+                $device->invoice_id,
 
-            'zoho'             => $zoho
+            'invoice_number' =>
+                $zoho['invoice_number']
+                ?? null,
+
+            'invoice_status' =>
+                $invoiceStatus,
+
+            'invoice_date' =>
+                $zoho['date']
+                ?? null,
+
+            'due_date' =>
+                $zoho['due_date']
+                ?? null,
+
+            'invoice_amount' =>
+                $zoho['total']
+                ?? null,
+
+            'balance_amount' =>
+                $zoho['balance']
+                ?? null,
+
+            'invoice_url' =>
+                $zoho['invoice_url']
+                ?? null,
+
+            /*
+            |--------------------------------------------------------------------------
+            | DEVICE INFO
+            |--------------------------------------------------------------------------
+            */
+
+            'imei1' =>
+                $device->imei1,
+
+            'product_name' =>
+                $device->product_name,
+
+            'customer_id' =>
+                $device->w_customer_id,
+
+            'retailer_id' =>
+                $device->retailer_id,
+
+            'company_id' =>
+                $device->company_id,
+
+            'created_at' =>
+                $device->created_at,
+
+            'updated_at' =>
+                $device->updated_at,
+
+            'zoho' =>
+                $zoho
         ]
     ]);
 }

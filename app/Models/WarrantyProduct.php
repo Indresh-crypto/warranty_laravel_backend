@@ -10,7 +10,7 @@ class WarrantyProduct extends Model
 {
     use HasFactory;
 
-    // ✅ FIX: correct table name
+    // FIX: correct table name
     protected $table = 'w_products';
 
     protected $fillable = [
@@ -38,7 +38,11 @@ class WarrantyProduct extends Model
         'sold_count',
         'retailer_benifits',
         'per_device_price',
-        'per_device_product_mrp'
+        'per_device_product_mrp',
+        'title',
+        'discount_price',
+        'show_popup',
+        'sub_title'
     ];
 
     /*
@@ -104,7 +108,7 @@ class WarrantyProduct extends Model
 
     /*
     |--------------------------------------------------------------------------
-    | 🔥 ANALYTICS HELPERS (VERY USEFUL)
+    | ANALYTICS HELPERS (VERY USEFUL)
     |--------------------------------------------------------------------------
     */
 

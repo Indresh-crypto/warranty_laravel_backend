@@ -18,17 +18,24 @@ class UpdateInactiveRetailers extends Command
 
         $inactiveDate = now()->subDays($days);
 
-        $retailers = Company::where('role', 5)->get();
+        $retailers = Company::where('role', 5)
+            ->where('flag', '!=', 'in_progress')
+            ->get();
 
         foreach ($retailers as $retailer) {
 
-            $lastSale = WDevice::where('retailer_id', $retailer->id)
+            $lastSale = WDevice::where(
+                    'retailer_id',
+                    $retailer->id
+                )
                 ->latest('created_at')
                 ->value('created_at');
 
-            // =====================================
-            // FLAG LOGIC
-            // =====================================
+            /*
+            |--------------------------------------------------------------------------
+            | FLAG LOGIC
+            |--------------------------------------------------------------------------
+            */
 
             if (!$lastSale) {
 
@@ -44,8 +51,10 @@ class UpdateInactiveRetailers extends Command
             }
 
             $retailer->update([
+
                 'last_sold_at' => $lastSale,
-                'flag'         => $flag
+
+                'flag' => $flag
             ]);
         }
 

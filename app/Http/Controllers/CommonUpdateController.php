@@ -27,9 +27,9 @@ use App\Mail\RetailerAgreementMail;
 use App\Mail\CompanyUserWelcomeMail;
 
 use App\Models\OrgUsersMaster;
-
-
+use App\Models\SubscribedPackage;
 use Illuminate\Support\Facades\Mail;
+use Carbon\Carbon;
 
 class CommonUpdateController extends Controller
 {
@@ -915,7 +915,7 @@ public function updateDynamicFieldsCompany(Request $request, $id)
     // Update company
     $company->update($data);
 
-    // 🔹 LOG API CALL
+    //  LOG API CALL
     CompanyApiLog::create([
         'company_id' => $company->id,
         'api_name'   => 'updateDynamicFieldsCompany',
@@ -945,6 +945,520 @@ public function getCompanyApiLogs(Request $request, $companyId)
         'data'   => $logs
     ]);
 }
+
+ public function getSubscribedUsers(Request $request)
+{
+
+        $query = SubscribedPackage::query()
+
+            ->with([
+
+                // RETAILER (COMPANY TABLE)
+
+                'retailer:id,business_name,contact_person,contact_phone,contact_email,company_code,role',
+
+                // PACKAGE
+
+                'package:id,name',
+
+                // COMPANY
+
+                'company:id,business_name,company_code'
+
+            ]);
+
+        // =====================================================
+
+        // EXACT FILTERS
+
+        // =====================================================
+
+        if ($request->filled('id')) {
+
+            $query->where('id', $request->id);
+
+        }
+
+        // retailer company id
+
+        if ($request->filled('retailer_id')) {
+
+            $query->where('retailer_id', $request->retailer_id);
+
+        }
+
+        // package company id
+
+        if ($request->filled('company_id')) {
+
+            $query->where('company_id', $request->company_id);
+
+        }
+
+        if ($request->filled('package_id')) {
+
+            $query->where('package_id', $request->package_id);
+
+        }
+
+        if ($request->filled('subscription_code')) {
+
+            $query->where('subscription_code', $request->subscription_code);
+
+        }
+
+        if ($request->filled('payment_mode')) {
+
+            $query->where('payment_mode', $request->payment_mode);
+
+        }
+
+        if ($request->filled('invoice_status')) {
+
+            $query->where('invoice_status', $request->invoice_status);
+
+        }
+
+        if ($request->filled('status')) {
+
+            $query->where('status', $request->status);
+
+        }
+
+        // =====================================================
+
+        // RETAILER FILTERS
+
+        // =====================================================
+
+        if ($request->filled('retailer_role')) {
+
+            $query->whereHas('retailer', function ($q) use ($request) {
+
+                $q->where('role', $request->retailer_role);
+
+            });
+
+        }
+
+        if ($request->filled('retailer_company_code')) {
+
+            $query->whereHas('retailer', function ($q) use ($request) {
+
+                $q->where('company_code', $request->retailer_company_code);
+
+            });
+
+        }
+
+        if ($request->filled('retailer_created_by_id')) {
+
+            $query->whereHas('retailer', function ($q) use ($request) {
+
+                $q->where('created_by_id', $request->retailer_created_by_id);
+
+            });
+
+        }
+
+        if ($request->filled('retailer_agent_id')) {
+
+            $query->whereHas('retailer', function ($q) use ($request) {
+
+                $q->where('agent_id', $request->retailer_agent_id);
+
+            });
+
+        }
+
+        if ($request->filled('retailer_senior_id')) {
+
+            $query->whereHas('retailer', function ($q) use ($request) {
+
+                $q->where('senior_id', $request->retailer_senior_id);
+
+            });
+
+        }
+
+        if ($request->filled('retailer_flag')) {
+
+            $query->whereHas('retailer', function ($q) use ($request) {
+
+                $q->where('flag', $request->retailer_flag);
+
+            });
+
+        }
+
+        // =====================================================
+
+        // SUBSCRIPTION TYPE FILTERS
+
+        // =====================================================
+
+        /*
+
+            subscription_type values:
+
+            active
+
+            expired
+
+            expiring
+
+            this_month
+
+            today_expiring
+
+        */
+
+        if ($request->filled('subscription_type')) {
+
+            switch ($request->subscription_type) {
+
+                case 'active':
+
+                    $query->whereDate('end_date', '>=', Carbon::today())
+
+                        ->where('status', 1);
+
+                    break;
+
+                case 'expired':
+
+                    $query->whereDate('end_date', '<', Carbon::today());
+
+                    break;
+
+                case 'this_month':
+
+                    $query->whereMonth('created_at', Carbon::now()->month)
+
+                        ->whereYear('created_at', Carbon::now()->year);
+
+                    break;
+
+                case 'today_expiring':
+
+                    $query->whereDate('end_date', Carbon::today());
+
+                    break;
+
+                case 'expiring':
+
+                    if ($request->filled('days')) {
+
+                        $targetDate = Carbon::today()
+
+                            ->addDays($request->days);
+
+                        $query->whereDate('end_date', $targetDate);
+
+                    }
+
+                    break;
+
+            }
+
+        }
+
+        // =====================================================
+
+        // DATE RANGE FILTERS
+
+        // =====================================================
+
+        if ($request->filled('start_date')) {
+
+            $query->whereDate('start_date', '>=', $request->start_date);
+
+        }
+
+        if ($request->filled('end_date')) {
+
+            $query->whereDate('end_date', '<=', $request->end_date);
+
+        }
+
+        if ($request->filled('created_from')) {
+
+            $query->whereDate('created_at', '>=', $request->created_from);
+
+        }
+
+        if ($request->filled('created_to')) {
+
+            $query->whereDate('created_at', '<=', $request->created_to);
+
+        }
+
+        // =====================================================
+
+        // MULTIPLE EXPIRY DAYS
+
+        // =====================================================
+
+        /*
+
+            Example:
+
+            expiry_days[]=4
+
+            expiry_days[]=8
+
+            expiry_days[]=10
+
+        */
+
+        if ($request->filled('expiry_days')) {
+
+            $daysArray = $request->expiry_days;
+
+            if (is_array($daysArray) && count($daysArray) > 0) {
+
+                $dates = [];
+
+                foreach ($daysArray as $day) {
+
+                    $dates[] = Carbon::today()
+
+                        ->addDays((int)$day)
+
+                        ->toDateString();
+
+                }
+
+                $query->whereIn('end_date', $dates);
+
+            }
+
+        }
+
+        // =====================================================
+
+        // LOW BALANCE FILTER
+
+        // =====================================================
+
+        if ($request->filled('low_balance')) {
+
+            $query->where('balance', '<=', $request->low_balance);
+
+        }
+
+        // =====================================================
+
+        // GLOBAL SEARCH
+
+        // =====================================================
+
+        if ($request->filled('search_value')) {
+
+            $search = $request->search_value;
+
+            $query->where(function ($q) use ($search) {
+
+                $q->where('subscription_code', 'LIKE', "%{$search}%")
+
+                    // retailer search
+
+                    ->orWhereHas('retailer', function ($retailer) use ($search) {
+
+                        $retailer->where('business_name', 'LIKE', "%{$search}%")
+
+                            ->orWhere('contact_person', 'LIKE', "%{$search}%")
+
+                            ->orWhere('contact_phone', 'LIKE', "%{$search}%")
+
+                            ->orWhere('contact_email', 'LIKE', "%{$search}%")
+
+                            ->orWhere('company_code', 'LIKE', "%{$search}%");
+
+                    })
+
+                    // company search
+
+                    ->orWhereHas('company', function ($company) use ($search) {
+
+                        $company->where('business_name', 'LIKE', "%{$search}%")
+
+                            ->orWhere('company_code', 'LIKE', "%{$search}%");
+
+                    })
+
+                    // package search
+
+                    ->orWhereHas('package', function ($package) use ($search) {
+
+                        $package->where('name', 'LIKE', "%{$search}%");
+
+                    });
+
+            });
+
+        }
+
+        // =====================================================
+
+        // SORTING
+
+        // =====================================================
+
+        $sortBy = $request->sort_by ?? 'id';
+
+        $sortOrder = strtoupper($request->sort_order ?? 'DESC');
+
+        $allowedSorts = [
+
+            'id',
+
+            'created_at',
+
+            'start_date',
+
+            'end_date',
+
+            'balance',
+
+            'amount',
+
+            'status'
+
+        ];
+
+        if (!in_array($sortBy, $allowedSorts)) {
+
+            $sortBy = 'id';
+
+        }
+
+        $sortOrder = $sortOrder === 'ASC'
+
+            ? 'ASC'
+
+            : 'DESC';
+
+        $query->orderBy($sortBy, $sortOrder);
+
+        // =====================================================
+
+        // PAGINATION
+
+        // =====================================================
+
+        $perPage = $request->per_page ?? 10;
+
+        $results = $query->paginate($perPage);
+
+        // =====================================================
+
+        // DASHBOARD COUNTS
+
+        // =====================================================
+
+        $today = Carbon::today();
+
+        $counts = [
+
+            'total_subscriptions' => SubscribedPackage::count(),
+
+            'active_subscriptions' => SubscribedPackage::whereDate('end_date', '>=', $today)
+
+                ->where('status', 1)
+
+                ->count(),
+
+            'expired_subscriptions' => SubscribedPackage::whereDate('end_date', '<', $today)
+
+                ->count(),
+
+            'this_month_subscriptions' => SubscribedPackage::whereMonth(
+
+                    'created_at',
+
+                    Carbon::now()->month
+
+                )
+
+                ->whereYear(
+
+                    'created_at',
+
+                    Carbon::now()->year
+
+                )
+
+                ->count(),
+
+            'today_expiring' => SubscribedPackage::whereDate(
+
+                    'end_date',
+
+                    $today
+
+                )
+
+                ->count(),
+
+            'expiring_in_3_days' => SubscribedPackage::whereDate(
+
+                    'end_date',
+
+                    Carbon::today()->addDays(3)
+
+                )
+
+                ->count(),
+
+            'expiring_in_7_days' => SubscribedPackage::whereDate(
+
+                    'end_date',
+
+                    Carbon::today()->addDays(7)
+
+                )
+
+                ->count(),
+
+        ];
+
+        // =====================================================
+
+        // RESPONSE
+
+        // =====================================================
+
+       return response()->json([
+
+    'status' => true,
+
+    'message' => 'Subscribed users list fetched successfully',
+
+    'counts' => $counts,
+
+    'pagination' => [
+
+        'current_page' => $results->currentPage(),
+
+        'per_page' => $results->perPage(),
+
+        'last_page' => $results->lastPage(),
+
+        'total' => $results->total()
+    ],
+
+    'data' => collect($results->items())->map(function ($item) {
+
+        return $item->makeHidden([
+            'payment_json',
+            'invoice_json'
+        ]);
+    })
+
+]);
+
+    }
 
 private function mapRole($role)
 {

@@ -13,6 +13,7 @@ class Company extends Model implements CanResetPassword
 
  use Notifiable, ResetPasswordTrait, HasApiTokens;
  
+
    protected $hidden = [
         'password',
     
@@ -114,7 +115,9 @@ class Company extends Model implements CanResetPassword
         'is_subscribed',
         'catalog',
         'last_sold_at',
-        'flag'
+        'flag',
+        'is_free_subscribed',
+        'free_subscribe_date'
     ];
 
     protected $casts = [
@@ -124,6 +127,7 @@ class Company extends Model implements CanResetPassword
     ];
 
 
+   
     public function leads()
     {
         return $this->hasMany(WLead::class, 'email', 'contact_email');

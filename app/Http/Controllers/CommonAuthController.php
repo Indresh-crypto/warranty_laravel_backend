@@ -97,7 +97,9 @@ public function login(Request $request)
 
         // create token
         $token = $company->createToken('company_token')->plainTextToken;
-
+        
+        $company->location_id = Company::where('id', 1)->value('location_id');
+        
         return response()->json([
             'status'  => true,
             'message' => 'Login successful',
@@ -740,6 +742,7 @@ public function sendCompanyOtp(Request $request)
             ], 422);
         }
     
+        
         // 🔹 Get Company Directly
         $company = Company::with('leads')
             ->find($request->company_id);
@@ -760,13 +763,16 @@ public function sendCompanyOtp(Request $request)
             ], 403);
         }
     
-        // 🚫 Wrong MPIN
+        //  Wrong MPIN
         if ($request->m_pin != $company->m_pin) {
             return response()->json([
                 'status'  => false,
                 'message' => 'Invalid MPIN'
             ], 401);
         }
+        
+        $company->location_id = Company::where('id', 1)->value('location_id');
+
     
         return response()->json([
             'status'  => true,

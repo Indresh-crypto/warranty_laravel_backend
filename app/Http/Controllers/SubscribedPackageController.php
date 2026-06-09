@@ -787,4 +787,596 @@ public function buyPackageWithCredit(Request $request)
 }
 
 
+    // with offer
+    
+     public function buyPackageWithoffer(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+    
+            'company_package_id' => 'required',
+    
+            'company_id' => 'required|exists:companies,id',
+    
+            'retailer_id' => 'required|exists:companies,id',
+    
+            'package_id' => 'required|exists:w_products,id',
+        ]);
+    
+        if ($validator->fails()) {
+    
+            return response()->json([
+    
+                'success' => false,
+    
+                'errors' => $validator->errors()
+    
+            ], 422);
+        }
+    
+        try {
+    
+            return Cache::lock(
+    
+                'offer-buy-package-' .
+                $request->retailer_id .
+                '-' .
+                $request->package_id,
+    
+                30
+    
+            )->block(10, function () use ($request) {
+    
+                DB::beginTransaction();
+    
+                try {
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | LOCK RETAILER
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $company = Company::where(
+                            'id',
+                            $request->retailer_id
+                        )
+                        ->lockForUpdate()
+                        ->first();
+    
+                    if (!$company) {
+    
+                        throw new \Exception(
+                            'Retailer not found'
+                        );
+                    }
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | DUPLICATE ACTIVE PACKAGE CHECK
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $alreadySubscribed = SubscribedPackage::where(
+                            'retailer_id',
+                            $request->retailer_id
+                        )
+                        ->where(
+                            'package_id',
+                            $request->package_id
+                        )
+                        ->where('status', 1)
+                        ->whereDate(
+                            'end_date',
+                            '>=',
+                            Carbon::today()
+                        )
+                        ->exists();
+    
+                    if ($alreadySubscribed) {
+    
+                        throw new \Exception(
+                            'Package already active for this retailer.'
+                        );
+                    }
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | PRODUCT
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $product = WarrantyProduct::findOrFail(
+                        $request->package_id
+                    );
+    
+                    if (!$product->zoho_id) {
+    
+                        throw new \Exception(
+                            'Zoho product mapping not found'
+                        );
+                    }
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | FINAL AMOUNT
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $finalAmount = (float) (
+                        $product->discount_price ?? 0
+                    );
+    
+                    if ($finalAmount < 0) {
+                        $finalAmount = 0;
+                    }
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | WALLET CHECK
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $walletBalance = (float) (
+                        $company->wallet_balance ?? 0
+                    );
+    
+                    if ($walletBalance < $finalAmount) {
+    
+                        throw new \Exception(
+                            'Insufficient wallet balance'
+                        );
+                    }
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | TRANSACTION REF
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $transactionRef =
+                        'WALLET-' .
+                        strtoupper(
+                            uniqid()
+                        );
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | CREATE SUBSCRIPTION
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $subscription =
+                        SubscribedPackage::create([
+    
+                            'transaction_ref' =>
+                                $transactionRef,
+    
+                            'package_id' =>
+                                $product->id,
+    
+                            'package_name' =>
+                                $product->name
+                                ?? 'Subscription Package',
+    
+                            'company_package_id' =>
+                                $request->company_package_id,
+    
+                            'company_id' =>
+                                $company->company_id,
+    
+                            'retailer_id' =>
+                                $request->retailer_id,
+    
+                            'payment_id' => 0,
+    
+                            'purchase_source' =>
+                                'wallet',
+    
+                            'status' => 0,
+    
+                            'enroll_max' =>
+                                $product->enroll_max,
+    
+                            'balance' =>
+                                $product->enroll_max,
+    
+                            'validity_days' =>
+                                $product->sub_val_days,
+    
+                            'start_date' =>
+                                now()->toDateString(),
+    
+                            'end_date' =>
+                                now()
+                                    ->addDays(
+                                        $product->sub_val_days
+                                    )
+                                    ->toDateString(),
+    
+                            'amount' =>
+                                $finalAmount,
+    
+                            'payment_mode' =>
+                                'wallet'
+                        ]);
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | SUBSCRIPTION CODE
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $subscriptionCode = strtoupper(
+    
+                        ($company->company_code ?? 'CMP')
+                        . '-'
+                        . now()->format('ymd')
+                        . '-'
+                        . str_pad(
+                            $subscription->id,
+                            5,
+                            '0',
+                            STR_PAD_LEFT
+                        )
+                    );
+    
+                    $subscription->subscription_code =
+                        $subscriptionCode;
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | WALLET DEDUCTION
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $company->wallet_balance =
+                        max(
+                            0,
+                            $walletBalance - $finalAmount
+                        );
+    
+                    $company->is_subscribed = 1;
+    
+                    $company->last_update_balance_at =
+                        now();
+    
+                        
+                        if ((float)$finalAmount <= 0) {
+                    
+                        $company->is_free_subscribed = 1;
+                    
+                        $company->free_subscribe_date =
+                    
+                            now();
+                    
+                    }
+                    
+
+                    $company->save();
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | SAVE SUBSCRIPTION
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    $subscription->save();
+    
+                    /*
+                    |--------------------------------------------------------------------------
+                    | FLOW LOG
+                    |--------------------------------------------------------------------------
+                    */
+    
+                    WarrantyFlowLog::create([
+    
+                        'payment_id' => 0,
+    
+                        'step' =>
+                            'SUBSCRIPTION_WALLET_STARTED',
+    
+                        'device_id' =>
+                            $subscription->id,
+    
+                        'status' => 1,
+    
+                        'response_data' =>
+                            json_encode([
+    
+                                'transaction_ref' =>
+                                    $transactionRef,
+    
+                                'amount' =>
+                                    $finalAmount
+                            ])
+                    ]);
+    
+                    DB::commit();
+    
+                } catch (\Throwable $e) {
+    
+                    DB::rollBack();
+    
+                    throw $e;
+                }
+    
+                /*
+                |--------------------------------------------------------------------------
+                | REFRESH MODELS
+                |--------------------------------------------------------------------------
+                */
+    
+                $subscription->refresh();
+    
+                $company->refresh();
+    
+                /*
+                |--------------------------------------------------------------------------
+                | CREATE ZOHO INVOICE
+                |--------------------------------------------------------------------------
+                */
+    
+                $controller = app(
+                    WarrantyPaymentFlowController::class
+                );
+    
+                $invoiceResult =
+                    $controller
+                        ->createSubscriptionInvoiceWithOffer(
+    
+                            $subscription,
+    
+                            $request->company_id,
+    
+                            $request->retailer_id,
+    
+                            $request->package_id,
+    
+                            0,
+    
+                            $finalAmount
+                        );
+    
+                if (
+                    empty(
+                        $invoiceResult['success']
+                    )
+                ) {
+    
+                    throw new \Exception(
+    
+                        $invoiceResult['message']
+                        ?? 'Invoice creation failed'
+                    );
+                }
+    
+                $zohoInvoice =
+                    $invoiceResult['invoice'];
+    
+                /*
+                |--------------------------------------------------------------------------
+                | UPDATE SUBSCRIPTION
+                |--------------------------------------------------------------------------
+                */
+    
+                $subscription->update([
+    
+                    'zoho_invoice_id' =>
+                        $zohoInvoice['invoice_id'] ?? null,
+    
+                    'invoice_created_date' =>
+                        $zohoInvoice['date']
+                        ?? now()->toDateString(),
+    
+                    'invoice_status' =>
+                        'paid',
+    
+                    'invoice_json' =>
+                        json_encode($zohoInvoice),
+    
+                    'payment_json' =>
+                        json_encode([
+    
+                            'payment_mode' =>
+                                'wallet',
+    
+                            'amount' =>
+                                $finalAmount,
+    
+                            'credited' => true
+                        ]),
+    
+                    'status' => 1
+                ]);
+    
+                /*
+                |--------------------------------------------------------------------------
+                | APPROVE INVOICE
+                |--------------------------------------------------------------------------
+                */
+    
+                if (!empty($zohoInvoice['invoice_id'])) {
+    
+                    $controller->approveZohoInvoice(
+    
+                        $request->company_id,
+    
+                        $zohoInvoice['invoice_id'],
+    
+                        $company->contact_email
+                    );
+                }
+    
+                /*
+                |--------------------------------------------------------------------------
+                | WHATSAPP
+                |--------------------------------------------------------------------------
+                */
+    
+                try {
+    
+                    $invoiceNumber =
+                        $zohoInvoice['invoice_number']
+                        ?? '-';
+    
+                    $invoiceDate =
+                        $zohoInvoice['date']
+                        ?? now()->toDateString();
+    
+                    $invoiceAmount =
+                        $zohoInvoice['total']
+                        ?? $finalAmount;
+    
+                    $invoiceUrl =
+                        $zohoInvoice['invoice_url']
+                        ?? (
+                            $zohoInvoice['customer_view_url']
+                            ?? ''
+                        );
+    
+                    $whatsappService =
+                        app(
+                            \App\Services\WhatsappService::class
+                        );
+    
+                    $whatsappService
+                        ->invoiceWhatsapp(
+    
+                            $company,
+    
+                            $invoiceNumber,
+    
+                            $invoiceDate,
+    
+                            $invoiceAmount,
+    
+                            $invoiceUrl
+                        );
+    
+                    $whatsappService
+                        ->sendSubscriptionActivatedWhatsapp(
+    
+                            $company,
+    
+                            $subscription
+                        );
+    
+                   
+    
+                } catch (\Throwable $e) {
+    
+                    \Log::error(
+    
+                        'WhatsApp Failed',
+    
+                        [
+    
+                            'subscription_id' =>
+                                $subscription->id,
+    
+                            'error' =>
+                                $e->getMessage()
+                        ]
+                    );
+                }
+    
+                /*
+                |--------------------------------------------------------------------------
+                | FINAL FLOW LOG
+                |--------------------------------------------------------------------------
+                */
+    
+                WarrantyFlowLog::create([
+    
+                    'payment_id' => 0,
+    
+                    'device_id' =>
+                        $subscription->id,
+    
+                    'invoice_id' =>
+                        $subscription->zoho_invoice_id,
+    
+                    'step' =>
+                        'SUBSCRIPTION_WALLET_CREDIT_APPLIED',
+    
+                    'zoho_payment_id' => null,
+    
+                    'status' => 1,
+    
+                    'response_data' =>
+                        json_encode([
+    
+                            'payment_mode' =>
+                                'wallet',
+    
+                            'credited' => true,
+    
+                            'amount' =>
+                                $finalAmount
+                        ])
+                ]);
+    
+                return response()->json([
+    
+                    'success' => true,
+    
+                    'message' =>
+                        'Subscription completed successfully.',
+    
+                    'data' => [
+    
+                        'subscription_id' =>
+                            $subscription->id,
+    
+                        'subscription_code' =>
+                            $subscription->subscription_code,
+    
+                        'invoice_id' =>
+                            $subscription->zoho_invoice_id,
+    
+                        'payment_mode' =>
+                            'wallet',
+    
+                        'paid_amount' =>
+                            $finalAmount,
+    
+                        'wallet_balance' =>
+                            $company->wallet_balance
+                    ]
+                ]);
+            });
+    
+        } catch (\Throwable $e) {
+    
+            \Log::error(
+    
+                'SUBSCRIPTION FLOW FAILED',
+    
+                [
+    
+                    'error' =>
+                        $e->getMessage(),
+    
+                    'line' =>
+                        $e->getLine(),
+    
+                    'file' =>
+                        $e->getFile(),
+    
+                    'request' =>
+                        $request->all()
+                ]
+            );
+    
+            return response()->json([
+    
+                'success' => false,
+    
+                'message' =>
+                    $e->getMessage()
+    
+            ], 500);
+        }
+    }
+
 }

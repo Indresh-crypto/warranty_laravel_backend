@@ -161,6 +161,16 @@ Broadcast::routes(['middleware' => []]);
         Route::get('/analytics/dashboard', [AnalyticsController::class, 'dashboard']);
         Route::get('/sales/report', [SalesReportController::class, 'report']);
         Route::get('/sales/compare', [SalesReportController::class, 'compare']);
+        
+        
+        Route::get('/dashboard/summary', [AdminController::class, 'dashboardSummary']);
+    
+        Route::get('/dashboard/warranty-sales', [AdminController::class, 'warrantySales']);
+        
+        Route::get('/dashboard/leads', [AdminController::class, 'leadsDashboard']);
+        
+        Route::get('/dashboard/retailer-status', [AdminController::class, 'retailerStatusDashboard']);
+
 
     
         Route::get('/email/open/{id}', [EmailTrackingController::class, 'track']);
@@ -242,7 +252,10 @@ Broadcast::routes(['middleware' => []]);
     Route::post('/common/login', [CommonAuthController::class, 'login']);
     Route::post('/common/update', [CommonUpdateController::class, 'updateOrCreate']);
     Route::get('/common/get-users', [CommonUpdateController::class, 'getCompanies']);
+    Route::get('/common/get-subscribed-users', [CommonUpdateController::class, 'getSubscribedUsers']);
+
     Route::post('/common/generate-user-code', [CommonUpdateController::class, 'generateUserCode']);
+
 
     Route::post('/common/send-otp', [CommonAuthController::class, 'sendCompanyOtp']);
     Route::post('/common/verify-otp', [CommonAuthController::class, 'verifyCompanyOtp']);
@@ -300,6 +313,9 @@ Broadcast::routes(['middleware' => []]);
         Route::post('/create-warranty-with-subscription', [WarrantyController::class, 'createDeviceWithInvoiceAndSubscription']);
 
         Route::post('/buy-subscription-with-credit', [SubscribedPackageController::class, 'buyPackageWithCredit']);
+
+        Route::post('/buy-subscription-with-offer', [SubscribedPackageController::class, 'buyPackageWithOffer']);
+
 
         Route::post('/create-warranty-by-customer', [WarrantyController::class, 'createDeviceByCustomer']);
 

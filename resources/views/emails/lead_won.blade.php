@@ -8,9 +8,9 @@
 # 🎉 Congratulations, {{ $lead->name }}!
 
 We’re excited to inform you that your onboarding with  
-**GoElectronix Technologies Pvt. Ltd.** has been **successfully completed**.
+**Warranty Mitra Technologies Pvt. Ltd.** has been **successfully completed**.
 
-You are officially part of the GoElectronix partner ecosystem 🚀
+You are officially part of the Warranty Mitra partner ecosystem 🚀
 
 ---
 
@@ -26,7 +26,7 @@ You are officially part of the GoElectronix partner ecosystem 🚀
 
 You can now log in to your dashboard using your registered email:
 
-@component('mail::button', ['url' => 'https://retailer.goelectronix.co.in'])
+@component('mail::button', ['url' => 'https://login.warrantymitra.com'])
 Login to Dashboard
 @endcomponent
 
@@ -39,14 +39,14 @@ Login to Dashboard
 - Access your dashboard
 - Start managing warranties & devices
 - Track claims and reports
-- Connect with your assigned GoElectronix support team
+- Connect with your assigned Warranty Mitra support team
 
 If you need any help getting started, our support team is always here for you.
 
 ---
 
 Thanks & regards,  
-**GoElectronix Team**
+**Warranty Mitra Team**
 
 ---
 
@@ -56,7 +56,7 @@ Unit No. 403, 4th Floor, Ellora Olearise, Plot No. A-786,
 TTC Industrial Area, MIDC, Kopar Khairane,  
 Navi Mumbai, Maharashtra – 400709, India  
 
-📧 hello@goelectronix.com  
-🌐 www.goelectronix.com  
+📧 info@warrantymitra.com  
+🌐 www.warrantymitra.com  
 
 @endcomponent

@@ -42,7 +42,7 @@ class AdvancePaymentJob implements ShouldQueue
     }
     
    public function handle()
-{
+   {
     /*
     |--------------------------------------------------------------------------
     | VALIDATION
@@ -200,7 +200,7 @@ class AdvancePaymentJob implements ShouldQueue
         } else {
 
             $paymentData = [
-
+                'is_advance_payment' => true,
                 'location_id' =>
                     $company->location_id,
 
@@ -669,8 +669,8 @@ class AdvancePaymentJob implements ShouldQueue
     }
 }
        
- public function failed(\Throwable $exception)
-{
+   public function failed(\Throwable $exception)
+   {
     try {
 
         WarrantyFlowLog::create([

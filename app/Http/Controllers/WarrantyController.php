@@ -89,72 +89,107 @@ class WarrantyController extends Controller
 
     public function getMatchingPriceTemplates(Request $request)
     {
+            /*
+            |--------------------------------------------------------------------------
+            | VALIDATION
+            |--------------------------------------------------------------------------
+            */
+                $validator = Validator::make($request->all(), [
+                    'company_id'    => 'required|integer|exists:companies,id',
+                    'category_id'   => 'required|integer|exists:category,id',
+                    'product_price' => 'required|numeric|min:0',
+                    'retailer_id'   => 'required|integer|exists:companies,id',
+                ]);
+            
+                if ($validator->fails()) {
+                    return response()->json([
+                        'status'  => false,
+                        'message' => 'Validation failed',
+                        'errors'  => $validator->errors(),
+                    ], 422);
+                }
+            
+                try {
+            
+                  
+                    $today = now()->toDateString();
+            
+       $matchingTemplates = PriceTemplate::with([
+    
+        'warrantyProduct',
+    
+        'warrantyProduct.subscribedPackages' => function ($q) use ($request, $today) {
+    
+            $q->where('retailer_id', $request->retailer_id)
+                ->where('status', 1)
+                ->whereDate('end_date', '>=', $today);
+        }
+    
+    ])
+    
+    
+    ->withCount([
+    
+        'warrantyProduct as active_subscription_count' => function ($q) use ($request, $today) {
+    
+            $q->whereHas('subscribedPackages', function ($sub) use ($request, $today) {
+    
+                $sub->where('retailer_id', $request->retailer_id)
+                    ->where('status', 1)
+                    ->whereDate('end_date', '>=', $today);
+            });
+        }
+    
+    ])
+    
+    ->where('company_id', $request->company_id)
+    
+    ->where(function ($query) use ($request, $today) {
+    
         /*
         |--------------------------------------------------------------------------
-        | VALIDATION
+        | NORMAL PRODUCTS
         |--------------------------------------------------------------------------
         */
-            $validator = Validator::make($request->all(), [
-                'company_id'    => 'required|integer|exists:companies,id',
-                'category_id'   => 'required|integer|exists:category,id',
-                'product_price' => 'required|numeric|min:0',
-                'retailer_id'   => 'required|integer|exists:companies,id',
-            ]);
-        
-            if ($validator->fails()) {
-                return response()->json([
-                    'status'  => false,
-                    'message' => 'Validation failed',
-                    'errors'  => $validator->errors(),
-                ], 422);
-            }
-        
-            try {
-        
-                /*
-                |--------------------------------------------------------------------------
-                | MAIN QUERY (FINAL LOGIC)
-                |--------------------------------------------------------------------------
-                */
-                $today = now()->toDateString();
-        
-            $matchingTemplates = PriceTemplate::with([
-            'warrantyProduct',
-            'warrantyProduct.subscribedPackages' => function ($q) use ($request, $today) {
-                $q->where('retailer_id', $request->retailer_id)
-                  ->where('status', 1)
-                  ->whereDate('end_date', '>=', $today);
-            }
-        ])
-        ->where('company_id', $request->company_id)
     
-        ->where(function ($query) use ($request, $today) {
+        $query->whereHas('warrantyProduct', function ($q) {
     
-            // NORMAL PRODUCTS
-            $query->whereHas('warrantyProduct', function ($q) {
-                $q->where('is_offer', 0);
-            });
+            $q->where('is_offer', 0);
+        });
     
-            // SUBSCRIPTION PRODUCTS
-            $query->orWhereHas('warrantyProduct', function ($q) use ($request, $today) {
-                $q->where('is_offer', 1)
-                  ->whereHas('subscribedPackages', function ($sub) use ($request, $today) {
-                      $sub->where('retailer_id', $request->retailer_id)
-                          ->where('status', 1)
-                          ->whereDate('end_date', '>=', $today);
-                  });
-            });
+        /*
+        |--------------------------------------------------------------------------
+        | SUBSCRIPTION PRODUCTS
+        |--------------------------------------------------------------------------
+        */
     
-        })
+        $query->orWhereHas('warrantyProduct', function ($q) use ($request, $today) {
     
-        ->whereHas('warrantyProduct.categories', function ($cat) use ($request) {
-            $cat->where('category_id', $request->category_id);
-        })
+            $q->where('is_offer', 1)
     
-        ->where('min_price', '<=', $request->product_price)
-        ->where('max_price', '>=', $request->product_price)
+                ->whereHas('subscribedPackages', function ($sub) use ($request, $today) {
     
-        ->get();
+                    $sub->where('retailer_id', $request->retailer_id)
+                        ->where('status', 1)
+                        ->whereDate('end_date', '>=', $today);
+                });
+        });
+    })
+    
+    ->whereHas('warrantyProduct.categories', function ($cat) use ($request) {
+    
+        $cat->where('category_id', $request->category_id);
+    })
+    
+    ->where('min_price', '<=', $request->product_price)
+    
+    ->where('max_price', '>=', $request->product_price)
+    
+    
+    
+    ->orderByDesc('active_subscription_count')
+    
+    ->get();
         
                 /*
                 |--------------------------------------------------------------------------
@@ -904,7 +939,7 @@ class WarrantyController extends Controller
         ], 201);
     }
     
-    
+  /*  
 public function getCompanyProduct(Request $request)
 {
     $query = CompanyProduct::with('product.categories', 'company');
@@ -952,6 +987,106 @@ public function getCompanyProduct(Request $request)
         'data' => $companiesWithProducts
     ]);
 }
+*/
+
+ public function getCompanyProduct(Request $request)
+    {
+        $query = CompanyProduct::with('product.categories', 'company');
+    
+        // Filter by company
+        if ($request->filled('company_id')) {
+            $query->where('company_id', $request->company_id);
+        }
+    
+        // Filter by company_product_id
+        if ($request->filled('company_product_id')) {
+            $query->where('id', $request->company_product_id);
+        }
+    
+        // Filter by product.is_offer
+        if ($request->filled('is_offer')) {
+            $query->whereHas('product', function ($q) use ($request) {
+                $q->where('is_offer', (int) $request->is_offer);
+            });
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | GET ACTIVE SUBSCRIPTIONS
+        |--------------------------------------------------------------------------
+        */
+        $subscriptions = collect();
+    
+        if ($request->filled('retailer_id')) {
+    
+            $today = now()->toDateString();
+    
+            $subscriptions = SubscribedPackage::where('retailer_id', $request->retailer_id)
+    
+                // only active packages
+                ->where('status', 1)
+    
+                // balance should exist
+                ->where('balance', '>', 0)
+    
+                // expiry check
+                ->whereDate('end_date', '>=', $today)
+    
+                ->get()
+                ->keyBy('company_package_id');
+        }
+    
+        /*
+        |--------------------------------------------------------------------------
+        | RESPONSE
+        |--------------------------------------------------------------------------
+        */
+        $companiesWithProducts = $query->get()
+            ->groupBy('company_id')
+            ->map(function ($items, $companyId) use ($subscriptions) {
+    
+                return [
+    
+                    'company_id' => $companyId,
+    
+                    'company' => $items->first()->company,
+    
+                    'products' => $items->map(function ($item) use ($subscriptions) {
+    
+                        /*
+                        |--------------------------------------------------------------------------
+                        | CHECK SUBSCRIPTION
+                        |--------------------------------------------------------------------------
+                        */
+                        $subscription = $subscriptions->get($item->id);
+    
+                        $isSubscribed = $subscription ? true : false;
+    
+                        return [
+                            'company_product_id' => $item->id,
+                            'product_id'         => $item->product_id,
+                            'company_id'         => $item->company_id,
+                            'margin'             => $item->margin,
+                            'p_status'           => $item->p_status,
+    
+                        
+                            'is_subscribed'      => $isSubscribed,
+    
+                            // OPTIONAL
+                            'subscription'       => $subscription,
+    
+                            'product'            => $item->product
+                        ];
+                    }),
+                ];
+            })
+            ->values();
+    
+        return response()->json([
+            'message' => 'Company products retrieved successfully.',
+            'data'    => $companiesWithProducts
+        ]);
+    }
     public function UploadFile(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -1615,8 +1750,12 @@ public function dashboardCounts(Request $request)
 
             'active_warranties_count' =>
                 (clone $deviceQuery)
-                    ->where('status', 'active')
+                    ->where('status', 1)
                     ->count(),
+                    
+            'total_warranties_count' =>
+                    (clone $deviceQuery)
+                        ->count(),
 
             'approved_commission' => $approvedCommission,
             'pending_commission'  => $pendingCommission,
@@ -3341,22 +3480,39 @@ public function getRetailerTransactions($company_id, $retailer_id)
                 ],
                 'query' => [
                     'organization_id' => $company->zoho_org_id,
-                    'customer_id' => $retailer->zoho_id
+                    'customer_id' => $retailer->zoho_id,
+                    'location_id' => "588149000012835244"
                 ]
             ]
         );
 
         $body = json_decode($response->getBody(), true);
-        $payments = $body['customerpayments'] ?? [];
+       
+                   $payments = collect($body['customerpayments'] ?? [])
+            
+                ->filter(function ($payment) {
+            
+                    return isset($payment['location_id']) &&
+            
+                           $payment['location_id'] == "588149000012835244";
+            
+                })
+            
+                ->values();
+            
+            return response()->json([
+            
+                'success' => true,
+            
+                'retailer_id' => $retailer_id,
+            
+                'transactions' => $payments
+            
+            ]);
+
 
        
 
-
-        return response()->json([
-            'success' => true,
-            'retailer_id' => $retailer_id,
-            'transactions' => $payments
-        ]);
 
     } catch (\Exception $e) {
 
@@ -4259,104 +4415,303 @@ public function createDeviceByCustomer(Request $request)
         ], 500);
     }
 }
-    public function productSalesReport(Request $request)
-    
-    {
-    
-        $query = WDevice::query();
-    
-        // Filters (same logic as before)
-    
-        if ($request->filled('agent_id')) {
-    
-            $query->where('agent_id', $request->agent_id);
-    
-        }
-    
-        if ($request->filled('company_id')) {
-    
-            $query->where('company_id', $request->company_id);
-    
-        }
-    
-        if ($request->filled('created_by')) {
-    
-            $query->where('created_by', $request->created_by);
-    
-        }
-    
-        if ($request->filled('retailer_id')) {
-    
-            $query->where('retailer_id', $request->retailer_id);
-    
-        }
-    
-        // Optional date range
-    
-        if ($request->filled('start_date')) {
-    
-            $query->whereDate('created_at', '>=', $request->start_date);
-    
-        }
-    
-        if ($request->filled('end_date')) {
-    
-            $query->whereDate('created_at', '<=', $request->end_date);
-    
-        }
-    
-        //  Get grouped raw data
-    
-        $rows = $query->selectRaw("
-    
-                DATE(created_at) as date,
-    
-                product_name,
-    
-                COUNT(*) as total
-    
-            ")
-    
-            ->whereNotNull('product_name')
-    
-            ->groupBy('date', 'product_name')
-    
-            ->orderBy('date')
-    
-            ->get();
-    
-        //  Transform to required format
-    
-        $result = [];
-    
-        foreach ($rows as $row) {
-    
-            $date = $row->date;
-    
-            $product = strtolower($row->product_name); // match your frontend format
-    
-            if (!isset($result[$date])) {
-    
-                $result[$date] = [
-    
-                    'date' => $date
-    
-                ];
-    
-            }
-    
-            $result[$date][$product] = (int) $row->total;
-    
-        }
-    
-        // Re-index array
-    
-        $final = array_values($result);
-    
-        return response()->json($final);
-    
+   public function productSalesReport(Request $request)
+   {
+    $query = WDevice::query();
+
+    /*
+    |--------------------------------------------------------------------------
+    | FILTERS
+    |--------------------------------------------------------------------------
+    */
+
+    if ($request->filled('agent_id')) {
+
+        $query->where(
+            'agent_id',
+            $request->agent_id
+        );
     }
-    
+
+    if ($request->filled('company_id')) {
+
+        $query->where(
+            'company_id',
+            $request->company_id
+        );
+    }
+
+    if ($request->filled('created_by')) {
+
+        $query->where(
+            'created_by',
+            $request->created_by
+        );
+    }
+
+    if ($request->filled('retailer_id')) {
+
+        $query->where(
+            'retailer_id',
+            $request->retailer_id
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DATE RANGE
+    |--------------------------------------------------------------------------
+    */
+
+    if ($request->filled('start_date')) {
+
+        $query->whereDate(
+            'created_at',
+            '>=',
+            $request->start_date
+        );
+    }
+
+    if ($request->filled('end_date')) {
+
+        $query->whereDate(
+            'created_at',
+            '<=',
+            $request->end_date
+        );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PRODUCT WISE DATA
+    |--------------------------------------------------------------------------
+    */
+
+    $productRows = (clone $query)
+
+        ->selectRaw("
+
+            DATE(created_at) as date,
+
+            product_name,
+
+            COUNT(*) as total_count,
+
+            SUM(product_price) as total_amount
+
+        ")
+
+        ->whereNotNull('product_name')
+
+        ->groupBy(
+            'date',
+            'product_name'
+        )
+
+        ->orderBy('date')
+
+        ->get();
+
+    /*
+    |--------------------------------------------------------------------------
+    | PRODUCT TYPE WISE DATA
+    |--------------------------------------------------------------------------
+    */
+
+    $typeRows = (clone $query)
+
+        ->selectRaw("
+
+            DATE(created_at) as date,
+
+            product_type,
+
+            COUNT(*) as total_count,
+
+            SUM(product_price) as total_amount
+
+        ")
+
+        ->whereNotNull('product_type')
+
+        ->groupBy(
+            'date',
+            'product_type'
+        )
+
+        ->orderBy('date')
+
+        ->get();
+
+    /*
+    |--------------------------------------------------------------------------
+    | PRODUCT FORMAT
+    |--------------------------------------------------------------------------
+    */
+
+    $productResult = [];
+
+    $productTotals = [];
+
+    foreach ($productRows as $row) {
+
+        $date = $row->date;
+
+        $product = strtolower(
+            trim($row->product_name)
+        );
+
+        if (!isset($productResult[$date])) {
+
+            $productResult[$date] = [
+
+                'date' => $date
+            ];
+        }
+
+        $productResult[$date][$product] = [
+
+            'count' =>
+                (int) $row->total_count,
+
+            'amount' =>
+                round(
+                    (float) $row->total_amount,
+                    2
+                )
+        ];
+
+        /*
+        |--------------------------------------------------------------------------
+        | OVERALL PRODUCT TOTAL
+        |--------------------------------------------------------------------------
+        */
+
+        if (!isset($productTotals[$product])) {
+
+            $productTotals[$product] = [
+
+                'count' => 0,
+
+                'amount' => 0
+            ];
+        }
+
+        $productTotals[$product]['count']
+            += (int) $row->total_count;
+
+        $productTotals[$product]['amount']
+            += (float) $row->total_amount;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PRODUCT TYPE FORMAT
+    |--------------------------------------------------------------------------
+    */
+
+    $typeResult = [];
+
+    $typeTotals = [];
+
+    foreach ($typeRows as $row) {
+
+        $date = $row->date;
+
+        $type = strtolower(
+            trim($row->product_type)
+        );
+
+        if (!isset($typeResult[$date])) {
+
+            $typeResult[$date] = [
+
+                'date' => $date
+            ];
+        }
+
+        $typeResult[$date][$type] = [
+
+            'count' =>
+                (int) $row->total_count,
+
+            'amount' =>
+                round(
+                    (float) $row->total_amount,
+                    2
+                )
+        ];
+
+        /*
+        |--------------------------------------------------------------------------
+        | OVERALL TYPE TOTAL
+        |--------------------------------------------------------------------------
+        */
+
+        if (!isset($typeTotals[$type])) {
+
+            $typeTotals[$type] = [
+
+                'count' => 0,
+
+                'amount' => 0
+            ];
+        }
+
+        $typeTotals[$type]['count']
+            += (int) $row->total_count;
+
+        $typeTotals[$type]['amount']
+            += (float) $row->total_amount;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ROUND TOTAL AMOUNTS
+    |--------------------------------------------------------------------------
+    */
+
+    foreach ($productTotals as $key => $value) {
+
+        $productTotals[$key]['amount']
+            = round(
+                $value['amount'],
+                2
+            );
+    }
+
+    foreach ($typeTotals as $key => $value) {
+
+        $typeTotals[$key]['amount']
+            = round(
+                $value['amount'],
+                2
+            );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | RESPONSE
+    |--------------------------------------------------------------------------
+    */
+
+    return response()->json([
+
+        'success' => true,
+
+        'products' => array_values(
+            $productResult
+        ),
+
+        'product_types' => array_values(
+            $typeResult
+        ),
+
+        'product_totals' => $productTotals,
+
+        'product_type_totals' => $typeTotals
+    ]);
+}
     public function approveZohoInvoice(
     $company_id,
     $invoiceId,

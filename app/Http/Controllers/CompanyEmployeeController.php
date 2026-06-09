@@ -661,30 +661,68 @@ class CompanyEmployeeController extends Controller
             })
             ->sum('product_price');
 
+            $leadBaseQuery = WLead::whereIn('company_id', $retailerIds);
+            
+            $todayLeadFollowups = (clone $leadBaseQuery)
+            
+                ->whereDate('followup_date', Carbon::today())
+            
+                ->count();
+            
+            $tomorrowLeadFollowups = (clone $leadBaseQuery)
+            
+                ->whereDate('followup_date', Carbon::tomorrow())
+            
+                ->count();
+            
+            $pendingLeadFollowups = (clone $leadBaseQuery)
+            
+                ->whereDate('followup_date', '<', Carbon::today())
+            
+                ->count();
+            
+            $upcomingLeadFollowups = (clone $leadBaseQuery)
+            
+                ->whereDate('followup_date', '>', Carbon::today())
+            
+                ->count();
+    
         // ==========================
         // RESPONSE
         // ==========================
     
         return response()->json([
-            'success' => true,
-    
-            'assigned_retailers' => $assignedRetailers,
-    
-            'connected_retailers' => [
-                'connected'     => $connectedRetailers,
-                'not_connected' => $notConnectedRetailers
-            ],
-    
-            'using_product' => [
-                'using'     => $usingRetailers,
-                'not_using' => $notUsingRetailers
-            ],
-    
-            'sales' => [
-                'this_month' => round($monthlySales, 2),
-                'outstanding' => round($outstandingAmount, 2)
-            ]
-        ]);
+                'success' => true,
+            
+                'assigned_retailers' => $assignedRetailers,
+            
+                'connected_retailers' => [
+                    'connected'     => $connectedRetailers,
+                    'not_connected' => $notConnectedRetailers
+                ],
+            
+                'using_product' => [
+                    'using'     => $usingRetailers,
+                    'not_using' => $notUsingRetailers
+                ],
+            
+                'sales' => [
+                    'this_month' => round($monthlySales, 2),
+                    'outstanding' => round($outstandingAmount, 2)
+                ],
+            
+                'lead_followups' => [
+            
+                    'today' => $todayLeadFollowups,
+            
+                    'tomorrow' => $tomorrowLeadFollowups,
+            
+                    'pending' => $pendingLeadFollowups,
+            
+                    'upcoming' => $upcomingLeadFollowups
+            
+                ]
+            ]);
     }
     
     public function retailerStatusSnapshot(Request $request)

@@ -74,7 +74,8 @@ class WDevice extends Model
         'paid_at',
         'model_id',
         'is_from_wallet',
-        'subscription_id'
+        'subscription_id',
+        'product_type'
     ];
 
    protected static function booted()
